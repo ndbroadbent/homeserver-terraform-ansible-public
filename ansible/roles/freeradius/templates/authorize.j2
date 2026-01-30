@@ -1,0 +1,20 @@
+# FreeRADIUS authorize file - generated from config/network.yaml
+# MAC addresses use format: lowercase, no separators (e.g., 001122334455)
+# Specific entries MUST come before DEFAULT (first match wins)
+
+{% for device_id, device in devices.items() %}
+{% if device.network != 'main' %}
+# {{ device.name }} ({{ device.note }})
+{{ device.mac | lower | replace(':', '') }} Cleartext-Password := "{{ device.mac | lower | replace(':', '') }}"
+    Tunnel-Type = VLAN,
+    Tunnel-Medium-Type = IEEE-802,
+    Tunnel-Private-Group-ID = "{{ networks[device.network].vlan_id }}"
+
+{% endif %}
+{% endfor %}
+# Default entry - all unknown devices go to Devices VLAN (30)
+# Isolates untrusted IoT devices from Main network
+DEFAULT Cleartext-Password := "%{User-Name}"
+    Tunnel-Type = VLAN,
+    Tunnel-Medium-Type = IEEE-802,
+    Tunnel-Private-Group-ID = "{{ networks.devices.vlan_id }}"

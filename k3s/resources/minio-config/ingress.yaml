@@ -1,0 +1,45 @@
+---
+# MinIO Console IngressRoute
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: minio-console
+  namespace: minio
+  annotations:
+    gethomepage.dev/enabled: 'true'
+    gethomepage.dev/name: MinIO
+    gethomepage.dev/description: Object Storage
+    gethomepage.dev/group: Infrastructure
+    gethomepage.dev/icon: minio.png
+    gethomepage.dev/href: https://minio.home.example.com
+    gethomepage.dev/pod-selector: app=minio
+    gethomepage.dev/siteMonitor: http://minio-console.minio.svc.cluster.local:9001
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`minio.home.example.com`)
+      kind: Rule
+      services:
+        - name: minio-console
+          port: 9001
+  tls: {}
+---
+# MinIO API IngressRoute (for external S3 access if needed)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: minio-api
+  namespace: minio
+  annotations:
+    gethomepage.dev/enabled: 'false'
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`s3.home.example.com`)
+      kind: Rule
+      services:
+        - name: minio
+          port: 9000
+  tls: {}

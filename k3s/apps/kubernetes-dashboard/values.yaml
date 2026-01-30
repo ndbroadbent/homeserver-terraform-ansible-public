@@ -1,0 +1,40 @@
+---
+# Kubernetes Dashboard configuration
+# Chart: https://github.com/kubernetes/dashboard
+
+# Disable ingress - using Traefik IngressRoute instead
+app:
+  ingress:
+    enabled: false
+
+# Kong configuration - enable HTTP
+kong:
+  proxy:
+    http:
+      enabled: true
+
+# Service account and RBAC
+serviceAccount:
+  create: true
+  name: kubernetes-dashboard
+
+# Disable metrics scraper (optional)
+metricsScraper:
+  enabled: true
+
+# Resource limits
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Security context
+securityContext:
+  runAsUser: 1001
+  runAsGroup: 2001
+  runAsNonRoot: true
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false

@@ -1,0 +1,139 @@
+---
+- name: Deploy AdGuard Home
+  hosts: services-pi
+  become: true
+  vars:
+    adguardhome_install_dir: /opt/AdGuardHome
+    adguardhome_config_file: '{{ adguardhome_install_dir }}/AdGuardHome.yaml'
+    adguardhome_data_dir: '{{ adguardhome_install_dir }}/data'
+    adguardhome_binary_url: 'https://static.adtidy.org/adguardhome/release/AdGuardHome_linux_arm64.tar.gz'
+
+    # Service configuration - can be overridden per host
+    adguardhome_bind_address: '0.0.0.0:80'
+    adguardhome_dns_bind_host: '0.0.0.0'
+    adguardhome_server_name: 'adguard-pi.home.example.com'
+
+  tasks:
+    - name: Manage password salts
+      ansible.builtin.include_tasks: ../tasks/manage_password_salts.yml
+      vars:
+        required_salt_names:
+          - adguard_salt
+
+    - name: Generate bcrypt hash for AdGuard Home password
+      ansible.builtin.set_fact:
+        adguardhome_password_hash: "{{ adguardhome_password | password_hash('bcrypt', salt=password_salts.adguard_salt) }}"
+      no_log: true
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - curl
+          - ca-certificates
+        state: present
+
+    - name: Create AdGuard Home directories
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - '{{ adguardhome_install_dir }}'
+        - '{{ adguardhome_data_dir }}'
+
+    - name: Check if AdGuard Home binary exists
+      ansible.builtin.stat:
+        path: '{{ adguardhome_install_dir }}/AdGuardHome'
+      register: adguardhome_binary
+
+    - name: Download and install AdGuard Home
+      when: not adguardhome_binary.stat.exists
+      block:
+        - name: Download AdGuard Home
+          ansible.builtin.get_url:
+            url: '{{ adguardhome_binary_url }}'
+            dest: '/tmp/adguard.tar.gz'
+            mode: '0644'
+
+        - name: Extract AdGuard Home
+          ansible.builtin.unarchive:
+            src: '/tmp/adguard.tar.gz'
+            dest: '/tmp'
+            remote_src: true
+
+        - name: Install AdGuard Home binary
+          ansible.builtin.copy:
+            src: '/tmp/AdGuardHome/AdGuardHome'
+            dest: '{{ adguardhome_install_dir }}/AdGuardHome'
+            owner: root
+            group: root
+            mode: '0755'
+            remote_src: true
+
+        - name: Clean up download files
+          ansible.builtin.file:
+            path: '{{ item }}'
+            state: absent
+          loop:
+            - '/tmp/adguard.tar.gz'
+            - '/tmp/AdGuardHome'
+
+    - name: Generate AdGuard Home configuration
+      ansible.builtin.template:
+        src: ../roles/adguardhome/templates/AdGuardHome.yaml.j2
+        dest: '{{ adguardhome_config_file }}'
+        owner: root
+        group: root
+        mode: '0600'
+      notify: Restart AdGuard Home
+
+    - name: Create AdGuard Home systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/AdGuardHome.service
+        content: |
+          [Unit]
+          Description=AdGuard Home: Network-level blocker
+          ConditionFileIsExecutable={{ adguardhome_install_dir }}/AdGuardHome
+          After=syslog.target network-online.target
+
+          [Service]
+          StartLimitInterval=5
+          StartLimitBurst=10
+          ExecStart={{ adguardhome_install_dir }}/AdGuardHome "-s" "run"
+          WorkingDirectory={{ adguardhome_install_dir }}
+          StandardOutput=file:/var/log/AdGuardHome.out
+          StandardError=file:/var/log/AdGuardHome.err
+          Restart=always
+          RestartSec=10
+          EnvironmentFile=-/etc/sysconfig/AdGuardHome
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+      notify:
+        - Reload systemd
+        - Restart AdGuard Home
+
+    - name: Enable and start AdGuard Home service
+      ansible.builtin.systemd:
+        name: AdGuardHome
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart AdGuard Home
+      ansible.builtin.systemd:
+        name: AdGuardHome
+        state: restarted

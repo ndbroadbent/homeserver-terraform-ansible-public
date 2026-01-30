@@ -1,0 +1,32 @@
+---
+# 1Password Connect server configuration
+connect:
+  serviceType: ClusterIP
+
+  # Resource limits
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+  # Reference to Kubernetes secret containing credentials
+  credentialsName: onepassword-connect-credentials
+  credentialsKey: '1password-credentials.json'
+
+  # Data persistence
+  dataVolume:
+    type: emptyDir
+
+# API service configuration
+operator:
+  create: false
+
+# Security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 999
+  runAsGroup: 999
+  fsGroup: 999

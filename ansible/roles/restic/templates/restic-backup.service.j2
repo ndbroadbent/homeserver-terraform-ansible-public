@@ -1,0 +1,18 @@
+[Unit]
+Description=Restic Backup Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ restic_install_dir }}/backup.sh
+Nice=19
+IOSchedulingClass=idle
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=restic-backup
+
+[Install]
+WantedBy=multi-user.target

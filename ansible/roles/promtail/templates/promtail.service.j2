@@ -1,0 +1,24 @@
+[Unit]
+Description=Promtail Log Collector
+Documentation=https://grafana.com/docs/loki/latest/clients/promtail/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ promtail_user }}
+Group={{ promtail_group }}
+ExecStart={{ promtail_install_dir }}/promtail -config.file={{ promtail_config_file }}
+Restart=always
+RestartSec=10s
+TimeoutStopSec=30s
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/promtail
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+---
+name: adguard-home
+namespace: adguard-home
+repoURL: tccr.io/truecharts
+localChartPath: adguard-home
+chart: adguard-home
+version: 11.5.7
+values: values.yaml
+ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+      - /spec/template/spec/hostUsers

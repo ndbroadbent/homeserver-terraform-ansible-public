@@ -1,0 +1,52 @@
+#!/bin/bash
+set -e
+
+# Tailscale Exit Node Configuration
+#
+# Uses OAuth client to generate a short-lived auth key, then authenticates.
+# This avoids the 90-day auth key expiry issue.
+
+OAUTH_CLIENT_ID="{{ tailscale_oauth_client_id }}"
+OAUTH_CLIENT_SECRET="{{ tailscale_oauth_client_secret }}"
+TAGS="{{ tailscale_tags | default('tag:exit-node') }}"
+ACCEPT_DNS="{{ tailscale_accept_dns | default(true) | lower }}"
+
+# Get OAuth access token
+ACCESS_TOKEN=$(curl -s -X POST "https://api.tailscale.com/api/v2/oauth/token" \
+  -u "${OAUTH_CLIENT_ID}:${OAUTH_CLIENT_SECRET}" \
+  -d "grant_type=client_credentials" | jq -r '.access_token')
+
+if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+  echo "Failed to get OAuth access token"
+  exit 1
+fi
+
+# Generate a short-lived auth key using the access token
+AUTH_KEY=$(curl -s -X POST "https://api.tailscale.com/api/v2/tailnet/-/keys" \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"capabilities\": {
+      \"devices\": {
+        \"create\": {
+          \"reusable\": false,
+          \"ephemeral\": false,
+          \"preauthorized\": true,
+          \"tags\": [\"${TAGS}\"]
+        }
+      }
+    },
+    \"expirySeconds\": 300
+  }" | jq -r '.key')
+
+if [ -z "$AUTH_KEY" ] || [ "$AUTH_KEY" = "null" ]; then
+  echo "Failed to generate auth key"
+  exit 1
+fi
+
+# Authenticate with Tailscale
+tailscale up \
+  --authkey="${AUTH_KEY}" \
+  --advertise-exit-node \
+  --accept-dns="${ACCEPT_DNS}" \
+  --timeout=300s

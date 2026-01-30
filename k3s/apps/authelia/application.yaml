@@ -1,0 +1,13 @@
+---
+name: authelia
+namespace: authelia
+repoURL: https://charts.authelia.com
+chart: authelia
+version: 0.10.21
+values: values.yaml
+ignoreDifferences:
+  - group: apps
+    kind: DaemonSet
+    jqPathExpressions:
+      # Ignore secret checksum annotation - secrets are managed externally
+      - .spec.template.metadata.annotations["authelia.com/checksum-secret"]

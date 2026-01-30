@@ -1,0 +1,167 @@
+---
+- name: Install and Configure Prometheus Node Exporter on Proxmox Host
+  hosts: homeserver
+  become: true
+  vars:
+    node_exporter_version: '1.8.2'
+    node_exporter_user: node_exporter
+    node_exporter_group: node_exporter
+    node_exporter_release_base: 'https://github.com/prometheus/node_exporter/releases/download'
+    node_exporter_tarball: 'node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz'
+    node_exporter_extract_dir: 'node_exporter-{{ node_exporter_version }}.linux-amd64'
+    node_exporter_download_url: '{{ node_exporter_release_base }}/v{{ node_exporter_version }}/{{ node_exporter_tarball }}'
+
+  tasks:
+    - name: Create node_exporter system user
+      ansible.builtin.user:
+        name: '{{ node_exporter_user }}'
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+        state: present
+
+    - name: Create node_exporter group
+      ansible.builtin.group:
+        name: '{{ node_exporter_group }}'
+        system: true
+        state: present
+
+    - name: Download node_exporter
+      ansible.builtin.get_url:
+        url: '{{ node_exporter_download_url }}'
+        dest: '/tmp/{{ node_exporter_tarball }}'
+        mode: '0644'
+
+    - name: Extract node_exporter
+      ansible.builtin.unarchive:
+        src: '/tmp/{{ node_exporter_tarball }}'
+        dest: /tmp/
+        remote_src: true
+        creates: '/tmp/{{ node_exporter_extract_dir }}/node_exporter'
+
+    - name: Copy node_exporter binary to /usr/local/bin
+      ansible.builtin.copy:
+        src: '/tmp/{{ node_exporter_extract_dir }}/node_exporter'
+        dest: /usr/local/bin/node_exporter
+        owner: '{{ node_exporter_user }}'
+        group: '{{ node_exporter_group }}'
+        mode: '0755'
+        remote_src: true
+
+    - name: Create systemd service for node_exporter
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/node_exporter.service
+        content: |
+          [Unit]
+          Description=Prometheus Node Exporter
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User={{ node_exporter_user }}
+          Group={{ node_exporter_group }}
+          Type=simple
+          ExecStart=/usr/local/bin/node_exporter \
+            --collector.filesystem \
+            --collector.systemd \
+            --collector.zfs \
+            --collector.processes \
+            --collector.cpu \
+            --collector.meminfo \
+            --collector.diskstats \
+            --collector.netdev \
+            --collector.loadavg \
+            --collector.textfile \
+            --collector.textfile.directory=/var/lib/node_exporter/textfile_collector
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+        owner: root
+        group: root
+      notify: Restart node_exporter
+
+    - name: Ensure textfile collector directory exists
+      ansible.builtin.file:
+        path: /var/lib/node_exporter/textfile_collector
+        state: directory
+        owner: '{{ node_exporter_user }}'
+        group: '{{ node_exporter_group }}'
+        mode: '0755'
+
+    - name: Install ZFS metrics exporter script
+      ansible.builtin.copy:
+        dest: /usr/local/bin/export_zfs_metrics.sh
+        mode: '0755'
+        owner: root
+        group: root
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          OUTPUT="/var/lib/node_exporter/textfile_collector/zfs_metrics.prom"
+          TMP="$(mktemp)"
+          trap 'rm -f "$TMP"' EXIT
+
+          echo "# HELP zfs_dataset_used_bytes ZFS dataset used bytes" > "$TMP"
+          echo "# TYPE zfs_dataset_used_bytes gauge" >> "$TMP"
+          echo "# HELP zfs_dataset_available_bytes ZFS dataset available bytes" >> "$TMP"
+          echo "# TYPE zfs_dataset_available_bytes gauge" >> "$TMP"
+          echo "# HELP zfs_pool_used_bytes Total used bytes for a ZFS pool" >> "$TMP"
+          echo "# TYPE zfs_pool_used_bytes gauge" >> "$TMP"
+          echo "# HELP zfs_pool_available_bytes Total available bytes for a ZFS pool" >> "$TMP"
+          echo "# TYPE zfs_pool_available_bytes gauge" >> "$TMP"
+          echo "# HELP zfs_pool_size_bytes Total size bytes for a ZFS pool" >> "$TMP"
+          echo "# TYPE zfs_pool_size_bytes gauge" >> "$TMP"
+
+          while read -r name used avail _; do
+            echo "zfs_dataset_used_bytes{dataset=\"${name}\"} ${used}" >> "$TMP"
+            echo "zfs_dataset_available_bytes{dataset=\"${name}\"} ${avail}" >> "$TMP"
+          done < <(zfs list -Hp -o name,used,avail)
+
+          while read -r pool size alloc free; do
+            echo "zfs_pool_used_bytes{pool=\"${pool}\"} ${alloc}" >> "$TMP"
+            echo "zfs_pool_available_bytes{pool=\"${pool}\"} ${free}" >> "$TMP"
+            echo "zfs_pool_size_bytes{pool=\"${pool}\"} ${size}" >> "$TMP"
+          done < <(zpool list -Hp -o name,size,alloc,free)
+
+          chmod 0644 "$TMP"
+          mv "$TMP" "$OUTPUT"
+      notify: Run zfs metrics exporter
+
+    - name: Configure cron job for ZFS metrics exporter
+      ansible.builtin.copy:
+        dest: /etc/cron.d/zfs_metrics_exporter
+        mode: '0644'
+        owner: root
+        group: root
+        content: "* * * * * root /usr/local/bin/export_zfs_metrics.sh\n"
+      notify: Run zfs metrics exporter
+
+    - name: Enable and start node_exporter service
+      ansible.builtin.systemd:
+        name: node_exporter
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Verify node_exporter is responding
+      ansible.builtin.uri:
+        url: http://localhost:9100/metrics
+        return_content: false
+      register: node_exporter_health
+      until: node_exporter_health.status == 200
+      retries: 5
+      delay: 2
+
+  handlers:
+    - name: Restart node_exporter
+      ansible.builtin.systemd:
+        name: node_exporter
+        state: restarted
+        daemon_reload: true
+
+    - name: Run zfs metrics exporter
+      ansible.builtin.command: /usr/local/bin/export_zfs_metrics.sh
+      become: true
+      changed_when: false

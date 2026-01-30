@@ -1,0 +1,5 @@
+# Restic environment variables for B2 backend
+export B2_ACCOUNT_ID="{{ restic_b2_key_id }}"
+export B2_ACCOUNT_KEY="{{ restic_b2_key }}"
+export RESTIC_REPOSITORY="b2:{{ restic_b2_bucket }}:{{ restic_backup_name }}"
+export RESTIC_PASSWORD="{{ restic_password }}"

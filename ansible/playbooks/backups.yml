@@ -1,0 +1,24 @@
+---
+# Centralized restic backup on homeserver
+# All remote hosts rsync their data to /mnt/tank/backups/ first
+# Run with: ./scripts/ansible/backups.sh
+
+- name: Deploy centralized restic backup on Proxmox host
+  hosts: homeserver
+  become: true
+  vars:
+    restic_backup_paths:
+      # Central backup directory (rsync targets from Pi, etc.)
+      - /mnt/tank/backups/services-pi
+      # Media collections
+      - /mnt/tank/media/commercials
+      - /mnt/tank/media/screensaver_videos
+      - /mnt/tank/media/test_videos
+    restic_exclude_patterns:
+      - '*.tmp'
+      - '*.part'
+      - '*.log'
+  roles:
+    - restic
+# NOTE: Home Assistant runs HAOS which doesn't support direct Ansible/restic installation.
+# Use the "Home Assistant Google Drive Backup" add-on for HA backups instead.

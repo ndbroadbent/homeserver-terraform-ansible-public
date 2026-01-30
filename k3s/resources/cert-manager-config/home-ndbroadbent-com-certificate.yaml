@@ -1,0 +1,14 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: home-youruser-com
+  namespace: traefik
+spec:
+  secretName: home-youruser-com-tls
+  issuerRef:
+    name: letsencrypt-wildcard
+    kind: ClusterIssuer
+  dnsNames:
+    - home.example.com
+    - '*.home.example.com'

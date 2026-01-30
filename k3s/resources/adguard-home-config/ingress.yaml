@@ -1,0 +1,25 @@
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: adguard-k3s
+  namespace: adguard-home
+  annotations:
+    gethomepage.dev/enabled: 'true'
+    gethomepage.dev/name: AdGuard (K3s)
+    gethomepage.dev/description: DNS Filtering
+    gethomepage.dev/group: Infrastructure
+    gethomepage.dev/icon: adguard-home.png
+    gethomepage.dev/href: https://adguard.home.example.com
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=adguard-home
+    gethomepage.dev/siteMonitor: http://adguard-home.adguard-home.svc.cluster.local:80
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`adguard.home.example.com`)
+      kind: Rule
+      services:
+        - name: adguard-home
+          port: 80
+  tls: {}

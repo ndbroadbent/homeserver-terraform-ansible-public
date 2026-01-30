@@ -1,0 +1,11 @@
+---
+name: kube-prometheus-stack
+namespace: monitoring
+repoURL: https://prometheus-community.github.io/helm-charts
+chart: kube-prometheus-stack
+version: 77.12.0
+values: values.yaml
+syncWave: 1
+# CRDs are too large for client-side apply annotations - use Replace for CRDs
+syncOptions:
+  - Replace=true

@@ -1,0 +1,13 @@
+{
+  "name": "homeserver-terraform-ansible",
+  "version": "1.0.0",
+  "description": "Homeserver infrastructure management with Terraform and Ansible",
+  "private": true,
+  "devDependencies": {
+    "prettier": "^3.0.0",
+    "cspell": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

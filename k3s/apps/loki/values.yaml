@@ -1,0 +1,120 @@
+# Loki Helm Chart values
+# Chart: https://github.com/grafana/loki/tree/main/production/helm/loki
+# Version: 6.46.0
+
+# SingleBinary mode for homelab (simpler, all-in-one)
+deploymentMode: SingleBinary
+
+# Disable multi-tenancy for homelab
+loki:
+  auth_enabled: false
+
+  # Storage configuration - use MinIO S3
+  # Environment variables are expanded from the secret
+  storage:
+    type: s3
+    bucketNames:
+      chunks: loki
+      ruler: loki
+    s3:
+      endpoint: minio.minio.svc.cluster.local:9000
+      region: us-east-1
+      secretAccessKey: ${SECRET_ACCESS_KEY}
+      accessKeyId: ${ACCESS_KEY_ID}
+      s3ForcePathStyle: true
+      insecure: true
+
+  # Schema configuration
+  schemaConfig:
+    configs:
+      - from: '2024-01-01'
+        store: tsdb
+        object_store: s3
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+
+  # Common config
+  commonConfig:
+    replication_factor: 1
+
+  # Ingester configuration
+  ingester:
+    chunk_encoding: snappy
+
+  # Limits
+  limits_config:
+    ingestion_rate_mb: 10
+    ingestion_burst_size_mb: 20
+    max_streams_per_user: 10000
+    max_line_size: 256kb
+    retention_period: 30d
+
+  # Compactor for retention
+  compactor:
+    retention_enabled: true
+    delete_request_store: s3
+
+# SingleBinary configuration
+singleBinary:
+  replicas: 1
+  # Enable environment variable expansion in config file
+  extraArgs:
+    - '-config.expand-env=true'
+  # Inject S3 credentials as environment variables
+  extraEnvFrom:
+    - secretRef:
+        name: loki-s3-credentials
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  persistence:
+    enabled: true
+    storageClass: openebs-zfs-rpool
+    size: 10Gi
+
+# Disable components not needed for SingleBinary
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+
+# Disable caching (not needed for small homelab)
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+
+# Gateway for API access
+gateway:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# Disable test pod
+test:
+  enabled: false
+
+# Monitoring
+monitoring:
+  serviceMonitor:
+    enabled: true
+  selfMonitoring:
+    enabled: false
+    grafanaAgent:
+      installOperator: false
+  lokiCanary:
+    enabled: false

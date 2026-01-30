@@ -1,0 +1,3 @@
+# Authelia-specific kube-linter exclusions
+
+env-var-secret

@@ -1,0 +1,7 @@
+---
+name: postgresql
+namespace: postgresql
+repoURL: https://charts.bitnami.com/bitnami
+chart: postgresql
+version: 18.1.13
+values: values.yaml

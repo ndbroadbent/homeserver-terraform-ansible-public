@@ -1,0 +1,7 @@
+---
+name: homepage
+namespace: homepage
+repoURL: https://jameswynn.github.io/helm-charts
+chart: homepage
+version: 2.1.0
+values: values.yaml

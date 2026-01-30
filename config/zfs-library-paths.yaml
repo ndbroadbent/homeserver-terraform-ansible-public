@@ -1,0 +1,6 @@
+# ZFS library paths for K3s container configuration
+nvpair_path: /usr/lib/x86_64-linux-gnu/libnvpair.so.3.0.0
+uutil_path: /usr/lib/x86_64-linux-gnu/libuutil.so.3.0.0
+zfs_core_path: /usr/lib/x86_64-linux-gnu/libzfs_core.so.3.0.0
+zfs_path: /usr/lib/x86_64-linux-gnu/libzfs.so.4.1.0
+zpool_path: /usr/lib/x86_64-linux-gnu/libzpool.so.5.0.0

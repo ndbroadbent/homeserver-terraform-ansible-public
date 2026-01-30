@@ -1,0 +1,50 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: adguard-pi
+  namespace: traefik
+  annotations:
+    gethomepage.dev/enabled: 'true'
+    gethomepage.dev/name: AdGuard (Pi)
+    gethomepage.dev/description: DNS Filtering
+    gethomepage.dev/group: Infrastructure
+    gethomepage.dev/icon: adguard-home.png
+    gethomepage.dev/href: https://adguard-pi.home.example.com
+    gethomepage.dev/pod-selector: ''
+    gethomepage.dev/siteMonitor: http://10.11.12.22:80
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`adguard-pi.home.example.com`)
+      kind: Rule
+      services:
+        - name: adguard-pi-external
+          port: 80
+  tls:
+    secretName: home-youruser-com-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: adguard-pi-external
+  namespace: traefik
+spec:
+  clusterIP: None
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: adguard-pi-external
+  namespace: traefik
+subsets:
+  - addresses:
+      - ip: 10.11.12.22
+    ports:
+      - name: http
+        port: 80
+        protocol: TCP

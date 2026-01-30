@@ -1,0 +1,39 @@
+# Redis - Shared cache/queue server for all apps
+# Chart: https://github.com/bitnami/charts/tree/main/bitnami/redis
+
+# Use existing secret for credentials
+auth:
+  enabled: true
+  existingSecret: redis-credentials
+  existingSecretPasswordKey: redis-password
+
+# Architecture: standalone (no replicas needed for homelab)
+architecture: standalone
+
+master:
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClass: local-path
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  podAnnotations:
+    reloader.stakater.com/auto: 'true'
+
+# Disable replicas
+replica:
+  replicaCount: 0
+
+# Metrics for Prometheus
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring

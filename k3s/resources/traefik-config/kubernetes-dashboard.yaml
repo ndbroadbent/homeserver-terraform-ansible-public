@@ -1,0 +1,53 @@
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: kubernetes-dashboard
+  namespace: traefik
+spec:
+  provider:
+    kubernetes:
+      remoteNamespace: kubernetes-dashboard
+      auth:
+        serviceAccount:
+          name: external-secrets-sa
+      server:
+        caProvider:
+          type: ConfigMap
+          name: kube-root-ca.crt
+          key: ca.crt
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: k8s-dashboard-token
+  namespace: traefik
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: kubernetes-dashboard
+    kind: SecretStore
+  target:
+    name: k8s-dashboard-token
+    creationPolicy: Owner
+    template:
+      type: Opaque
+      data:
+        K8S_DASHBOARD_TOKEN: 'Bearer {{ .token | toString | trim }}'
+  data:
+    - secretKey: token
+      remoteRef:
+        key: admin-user-token
+        property: token
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: dashboard-auth-header
+  namespace: traefik
+spec:
+  plugin:
+    environmentheader:
+      requestHeaders:
+        - header: Authorization
+          env: K8S_DASHBOARD_TOKEN

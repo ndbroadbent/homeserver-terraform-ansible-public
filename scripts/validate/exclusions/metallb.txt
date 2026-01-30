@@ -1,0 +1,7 @@
+# MetalLB specific exclusions
+# MetalLB requires environment variables for secret paths and names - this is by design
+# The FRR container uses internal health checks that don't expose the port in the container spec
+
+env-var-secret
+liveness-port
+startup-port

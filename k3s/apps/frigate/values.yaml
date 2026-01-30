@@ -1,0 +1,235 @@
+# Frigate NVR Helm Chart Values
+# Chart: https://github.com/blakeblackshear/blakeshome-charts/tree/master/charts/frigate
+
+image:
+  repository: ghcr.io/blakeblackshear/frigate
+  # Use tensorrt-tagged image for NVIDIA GPU support (ONNX detector)
+  tag: 0.16.2-tensorrt
+
+env:
+  TZ: America/Denver
+
+# Load camera credentials from External Secret
+envFromSecrets:
+  - frigate-camera-credentials
+
+# Coral USB TPU
+coral:
+  enabled: true
+  hostPath: /dev/bus/usb
+
+# NVIDIA GPU for ffmpeg hardware acceleration
+# Note: gpu.nvidia.enabled requires the k8s device plugin which doesn't work in LXC
+# Instead, we mount /dev/dri and /dev/nvidia* directly via extraVolumes
+gpu:
+  nvidia:
+    enabled: false
+
+# Shared memory for caching
+shmSize: 1Gi
+
+# tmpfs for /tmp
+tmpfs:
+  enabled: true
+  sizeLimit: 1Gi
+
+# Privileged container for device access
+securityContext:
+  privileged: true
+
+# Persistence
+persistence:
+  config:
+    enabled: true
+    size: 1Gi
+    accessMode: ReadWriteOnce
+    ephemeralWritableConfigYaml: true
+  media:
+    enabled: false
+
+# Mount the host path for media storage and GPU devices
+extraVolumes:
+  - name: frigate-media
+    hostPath:
+      path: /mnt/frigate/media
+      type: DirectoryOrCreate
+  - name: dri
+    hostPath:
+      path: /dev/dri
+      type: Directory
+  - name: nvidia0
+    hostPath:
+      path: /dev/nvidia0
+      type: CharDevice
+  - name: nvidiactl
+    hostPath:
+      path: /dev/nvidiactl
+      type: CharDevice
+  - name: nvidia-modeset
+    hostPath:
+      path: /dev/nvidia-modeset
+      type: CharDevice
+  # NVIDIA libraries for CUDA support
+  - name: libcuda
+    hostPath:
+      path: /usr/lib/x86_64-linux-gnu/libcuda.so.1
+      type: File
+  - name: libnvidia-ml
+    hostPath:
+      path: /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1
+      type: File
+  - name: libnvidia-encode
+    hostPath:
+      path: /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1
+      type: File
+  - name: libnvidia-ptxjitcompiler
+    hostPath:
+      path: /usr/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1
+      type: File
+  - name: libnvcuvid
+    hostPath:
+      path: /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1
+      type: File
+
+extraVolumeMounts:
+  - name: frigate-media
+    mountPath: /media/frigate
+  - name: dri
+    mountPath: /dev/dri
+  - name: nvidia0
+    mountPath: /dev/nvidia0
+  - name: nvidiactl
+    mountPath: /dev/nvidiactl
+  - name: nvidia-modeset
+    mountPath: /dev/nvidia-modeset
+  # NVIDIA libraries for CUDA support
+  - name: libcuda
+    mountPath: /usr/lib/x86_64-linux-gnu/libcuda.so.1
+  - name: libnvidia-ml
+    mountPath: /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1
+  - name: libnvidia-encode
+    mountPath: /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1
+  - name: libnvidia-ptxjitcompiler
+    mountPath: /usr/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1
+  - name: libnvcuvid
+    mountPath: /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 5000
+
+# Resources
+resources:
+  requests:
+    memory: 1Gi
+    cpu: 500m
+  limits:
+    memory: 4Gi
+
+# Frigate configuration
+config: |
+  mqtt:
+    enabled: False
+
+  detectors:
+    coral:
+      type: edgetpu
+      device: usb
+
+  ffmpeg:
+    hwaccel_args: preset-nvidia-h264
+
+  # Motion detection - enabled by default, tune sensitivity
+  motion:
+    threshold: 30
+    contour_area: 10
+    improve_contrast: True
+
+  # Object detection - must be enabled
+  detect:
+    enabled: True
+    fps: 5
+
+  # Objects to track
+  objects:
+    track:
+      - person
+      - cat
+      - dog
+    filters:
+      person:
+        min_score: 0.5
+        threshold: 0.7
+      cat:
+        min_score: 0.4
+        threshold: 0.6
+      dog:
+        min_score: 0.4
+        threshold: 0.6
+
+  # Recording configuration
+  record:
+    enabled: True
+    retain:
+      days: 7
+      mode: motion
+    alerts:
+      pre_capture: 5
+      post_capture: 5
+      retain:
+        days: 90
+        mode: motion
+    detections:
+      pre_capture: 5
+      post_capture: 5
+      retain:
+        days: 90
+        mode: motion
+
+  # Snapshots
+  snapshots:
+    enabled: True
+    bounding_box: True
+    retain:
+      default: 90
+
+  # Review configuration for alerts/detections
+  review:
+    alerts:
+      labels:
+        - person
+    detections:
+      labels:
+        - person
+        - cat
+        - dog
+
+  cameras:
+    living_room:
+      enabled: True
+      ffmpeg:
+        inputs:
+          - path: rtsp://{FRIGATE_RTSP_USER}:{FRIGATE_RTSP_PASSWORD}@10.5.20.10:554/Preview_01_sub
+            roles:
+              - detect
+          - path: rtsp://{FRIGATE_RTSP_USER}:{FRIGATE_RTSP_PASSWORD}@10.5.20.10:554/Preview_01_main
+            roles:
+              - record
+      detect:
+        enabled: True
+        width: 640
+        height: 360
+        fps: 5
+      motion:
+        threshold: 30
+        contour_area: 10
+      record:
+        enabled: True
+      snapshots:
+        enabled: True
+      onvif:
+        host: 10.5.20.10
+        port: 8000
+        user: "{FRIGATE_RTSP_USER}"
+        password: "{FRIGATE_RTSP_PASSWORD}"

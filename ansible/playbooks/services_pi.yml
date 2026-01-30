@@ -1,0 +1,29 @@
+---
+- name: Configure Services Pi (Zigbee2MQTT + AdGuard Home)
+  hosts: services-pi
+  become: true
+  tasks:
+    - name: Set hostname to services-pi
+      ansible.builtin.hostname:
+        name: services-pi
+        use: systemd
+
+    - name: Update /etc/hosts with new hostname
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1\s+'
+        line: '127.0.1.1	services-pi'
+        backup: true
+
+    - name: Configure static IP and router DNS
+      ansible.builtin.template:
+        src: templates/pi-dhcpcd.conf.j2
+        dest: /etc/dhcpcd.conf
+        mode: '0644'
+        backup: true
+
+- name: Configure Zigbee2MQTT
+  import_playbook: zigbee2mqtt.yml
+
+- name: Configure AdGuard Home
+  import_playbook: adguard_home.yml

@@ -1,0 +1,86 @@
+# Tempo Helm Chart values (Single Binary mode)
+# Chart: https://github.com/grafana/helm-charts/tree/main/charts/tempo
+# Version: 1.24.1
+
+# Single replica for homelab
+replicas: 1
+
+tempo:
+  # Disable multi-tenancy
+  multitenancyEnabled: false
+
+  # Disable usage reporting
+  reportingEnabled: false
+
+  # Enable environment variable expansion in config file
+  extraArgs:
+    config.expand-env: 'true'
+
+  # Inject S3 credentials as environment variables
+  extraEnvFrom:
+    - secretRef:
+        name: tempo-s3-credentials
+
+  # Trace retention (30 days)
+  retention: 720h
+
+  # Storage configuration - use MinIO S3
+  # Environment variables are expanded from the secret
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: tempo
+        endpoint: minio.minio.svc.cluster.local:9000
+        access_key: ${ACCESS_KEY_ID}
+        secret_key: ${SECRET_ACCESS_KEY}
+        insecure: true
+      wal:
+        path: /var/tempo/wal
+      local:
+        path: /var/tempo/traces
+
+  # Enable metrics generator for service graphs
+  metricsGenerator:
+    enabled: true
+    remoteWriteUrl: 'http://kube-prometheus-stack-prometheus.monitoring:9090/api/v1/write'
+
+  # Receivers for ingesting traces
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: '0.0.0.0:4317'
+        http:
+          endpoint: '0.0.0.0:4318'
+    jaeger:
+      protocols:
+        grpc:
+          endpoint: '0.0.0.0:14250'
+        thrift_http:
+          endpoint: '0.0.0.0:14268'
+        thrift_compact:
+          endpoint: '0.0.0.0:6831'
+
+  # Resource allocation
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+# Persistence for WAL
+persistence:
+  enabled: true
+  storageClassName: openebs-zfs-rpool
+  size: 10Gi
+
+# Service configuration
+service:
+  type: ClusterIP
+
+# ServiceMonitor for Prometheus scraping
+serviceMonitor:
+  enabled: true

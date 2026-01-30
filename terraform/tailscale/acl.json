@@ -1,0 +1,53 @@
+{
+  "groups": {
+    "group:admins": ["admin@example.com"]
+  },
+  "tagOwners": {
+    "tag:homeserver": ["group:admins"]
+  },
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["group:admins"],
+      "dst": ["*:*"]
+    },
+    {
+      "action": "accept",
+      "src": ["tag:homeserver"],
+      "dst": ["*:*"]
+    },
+    {
+      "action": "accept",
+      "src": ["autogroup:member"],
+      "dst": ["autogroup:self:*"]
+    }
+  ],
+  "autoApprovers": {
+    "routes": {
+      "10.11.12.0/24": ["tag:homeserver"],
+      "10.5.20.0/24": ["tag:homeserver"],
+      "10.5.30.0/24": ["tag:homeserver"]
+    },
+    "exitNode": ["tag:homeserver"]
+  },
+  "ssh": [
+    {
+      "action": "check",
+      "src": ["group:admins"],
+      "dst": ["tag:homeserver"],
+      "users": ["autogroup:nonroot", "root"]
+    },
+    {
+      "action": "check",
+      "src": ["autogroup:member"],
+      "dst": ["autogroup:self"],
+      "users": ["autogroup:nonroot", "root"]
+    }
+  ],
+  "nodeAttrs": [
+    {
+      "target": ["tag:homeserver"],
+      "attr": ["funnel"]
+    }
+  ]
+}

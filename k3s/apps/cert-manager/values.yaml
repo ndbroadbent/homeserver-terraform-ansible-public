@@ -1,0 +1,11 @@
+---
+crds:
+  enabled: true
+global:
+  logLevel: 2
+serviceAccount:
+  name: cert-manager
+securityContext:
+  fsGroup: 1001
+prometheus:
+  enabled: false

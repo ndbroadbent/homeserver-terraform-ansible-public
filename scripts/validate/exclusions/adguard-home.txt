@@ -1,0 +1,2 @@
+# AdGuard Home specific exclusions
+unsafe-sysctls

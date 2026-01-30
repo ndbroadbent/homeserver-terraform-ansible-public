@@ -1,0 +1,165 @@
+---
+- name: Complete Home Assistant Onboarding
+  hosts: k3s_cluster
+  become: true
+  vars:
+    ha_service_url: 'http://home-assistant.home-assistant.svc.cluster.local:8123'
+    ha_client_id: 'https://ha.home.example.com/'
+
+  tasks:
+    - name: Get Home Assistant service ClusterIP
+      ansible.builtin.command: kubectl get svc home-assistant -n home-assistant -o jsonpath='{.spec.clusterIP}'
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: ha_cluster_ip
+      changed_when: false
+
+    - name: Set Home Assistant URL
+      ansible.builtin.set_fact:
+        ha_api_url: 'http://{{ ha_cluster_ip.stdout }}:8123'
+
+    - name: Check onboarding status
+      ansible.builtin.uri:
+        url: '{{ ha_api_url }}/api/onboarding'
+        method: GET
+        return_content: true
+      register: onboarding_status
+
+    - name: Parse onboarding steps
+      ansible.builtin.set_fact:
+        onboarding_steps: '{{ onboarding_status.json }}'
+        user_done: "{{ onboarding_status.json | selectattr('step', 'equalto', 'user') | map(attribute='done') | first }}"
+        core_config_done: "{{ onboarding_status.json | selectattr('step', 'equalto', 'core_config') | map(attribute='done') | first }}"
+        analytics_done: "{{ onboarding_status.json | selectattr('step', 'equalto', 'analytics') | map(attribute='done') | first }}"
+        integration_done: "{{ onboarding_status.json | selectattr('step', 'equalto', 'integration') | map(attribute='done') | first }}"
+
+    - name: Display onboarding status
+      ansible.builtin.debug:
+        msg: >-
+          Onboarding status - user: {{ user_done }}, core_config: {{ core_config_done }},
+          analytics: {{ analytics_done }}, integration: {{ integration_done }}
+
+    - name: Create owner account
+      ansible.builtin.uri:
+        url: '{{ ha_api_url }}/api/onboarding/users'
+        method: POST
+        body_format: json
+        body:
+          client_id: '{{ ha_client_id }}'
+          name: 'Admin User'
+          username: '{{ home_assistant_username }}'
+          password: '{{ home_assistant_password }}'
+          language: 'en'
+        status_code: 200
+        return_content: true
+      register: user_creation
+      when: not user_done
+      no_log: true
+
+    - name: Set auth code from user creation
+      ansible.builtin.set_fact:
+        ha_auth_code: '{{ user_creation.json.auth_code }}'
+      when: not user_done and user_creation is defined and user_creation.json is defined
+
+    # If user already exists, we need to login to get a token
+    - name: Get auth token via login flow (if user exists)
+      when: user_done and (not core_config_done or not analytics_done or not integration_done)
+      block:
+        - name: Start login flow
+          ansible.builtin.uri:
+            url: '{{ ha_api_url }}/auth/login_flow'
+            method: POST
+            body_format: json
+            body:
+              client_id: '{{ ha_client_id }}'
+              handler:
+                - homeassistant
+                - null
+              redirect_uri: '{{ ha_client_id }}'
+            status_code: 200
+            return_content: true
+          register: login_flow
+
+        - name: Submit login credentials
+          ansible.builtin.uri:
+            url: '{{ ha_api_url }}/auth/login_flow/{{ login_flow.json.flow_id }}'
+            method: POST
+            body_format: json
+            body:
+              client_id: '{{ ha_client_id }}'
+              username: '{{ home_assistant_username }}'
+              password: '{{ home_assistant_password }}'
+            status_code: 200
+            return_content: true
+          register: login_result
+          no_log: true
+
+        - name: Exchange auth code for access token
+          ansible.builtin.uri:
+            url: '{{ ha_api_url }}/auth/token'
+            method: POST
+            body_format: form-urlencoded
+            body:
+              grant_type: authorization_code
+              code: '{{ login_result.json.result }}'
+              client_id: '{{ ha_client_id }}'
+            status_code: 200
+            return_content: true
+          register: token_result
+          when: login_result.json.result is defined
+          no_log: true
+
+        - name: Set access token from login
+          ansible.builtin.set_fact:
+            ha_access_token: '{{ token_result.json.access_token }}'
+          when: token_result.json.access_token is defined
+
+    - name: Set token variable (from user creation or login)
+      ansible.builtin.set_fact:
+        ha_token: "{{ ha_auth_code | default(ha_access_token | default('')) }}"
+
+    - name: Complete core_config step
+      ansible.builtin.uri:
+        url: '{{ ha_api_url }}/api/onboarding/core_config'
+        method: POST
+        body_format: json
+        body: {}
+        headers:
+          Authorization: 'Bearer {{ ha_token }}'
+        status_code: 200
+      when: ha_token | length > 0 and not core_config_done
+
+    - name: Complete analytics step (opt out)
+      ansible.builtin.uri:
+        url: '{{ ha_api_url }}/api/onboarding/analytics'
+        method: POST
+        body_format: json
+        body: {}
+        headers:
+          Authorization: 'Bearer {{ ha_token }}'
+        status_code: 200
+      when: ha_token | length > 0 and not analytics_done
+
+    - name: Complete integration step
+      ansible.builtin.uri:
+        url: '{{ ha_api_url }}/api/onboarding/integration'
+        method: POST
+        body_format: json
+        body:
+          client_id: '{{ ha_client_id }}'
+          redirect_uri: '{{ ha_client_id }}'
+        headers:
+          Authorization: 'Bearer {{ ha_token }}'
+        status_code: 200
+      when: ha_token | length > 0 and not integration_done
+
+    - name: Verify onboarding is complete
+      ansible.builtin.uri:
+        url: '{{ ha_api_url }}/api/onboarding'
+        method: GET
+        return_content: true
+      register: final_status
+
+    - name: Display final status
+      ansible.builtin.debug:
+        msg: 'Onboarding complete. All steps: {{ final_status.json }}'

@@ -1,0 +1,10 @@
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: dashboard-auth-header
+  namespace: traefik
+spec:
+  headers:
+    customRequestHeaders:
+      Authorization: 'Bearer {{ .Secret "dashboard-auth-header" "token" }}'

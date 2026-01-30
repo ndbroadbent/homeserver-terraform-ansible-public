@@ -1,0 +1,7 @@
+---
+name: gatus
+namespace: gatus
+repoURL: https://twin.github.io/helm-charts
+chart: gatus
+version: 1.4.4
+values: values.yaml

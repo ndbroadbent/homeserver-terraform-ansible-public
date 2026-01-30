@@ -1,0 +1,46 @@
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: unifi
+  namespace: traefik
+  annotations:
+    gethomepage.dev/enabled: 'true'
+    gethomepage.dev/name: UniFi
+    gethomepage.dev/description: Network Controller
+    gethomepage.dev/group: Infrastructure
+    gethomepage.dev/icon: unifi.png
+    gethomepage.dev/href: https://unifi.home.example.com
+    gethomepage.dev/pod-selector: ''
+    gethomepage.dev/siteMonitor: https://10.11.12.1:443
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`unifi.home.example.com`)
+      kind: Rule
+      services:
+        - name: unifi-external
+          port: 443
+          serversTransport: insecure
+  tls:
+    secretName: home-youruser-com-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: unifi-external
+  namespace: traefik
+spec:
+  type: ExternalName
+  externalName: 10.11.12.1
+  ports:
+    - port: 443
+---
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: insecure
+  namespace: traefik
+spec:
+  insecureSkipVerify: true

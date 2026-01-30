@@ -1,0 +1,44 @@
+---
+# Central configuration for all Helm repositories used in this project
+# Format: repo-name: repo-url
+repositories:
+  k8s-at-home: https://k8s-at-home.com/charts/
+  external-secrets: https://charts.external-secrets.io
+  bitnami: https://charts.bitnami.com/bitnami
+  openebs: https://openebs.github.io/charts
+  onepassword: https://1password.github.io/connect-helm-charts
+  jetstack: https://charts.jetstack.io
+  traefik: https://traefik.github.io/charts
+  metallb: https://metallb.github.io/metallb
+  stakater: https://stakater.github.io/stakater-charts
+  authelia: https://charts.authelia.com
+  kubernetes-dashboard: https://kubernetes.github.io/dashboard/
+  prometheus-community: https://prometheus-community.github.io/helm-charts
+  grafana: https://grafana.github.io/helm-charts
+  minio: https://charts.min.io/
+  jameswynn: https://jameswynn.github.io/helm-charts
+  twin: https://twin.github.io/helm-charts
+  pajikos: http://pajikos.github.io/home-assistant-helm-chart/
+  blakeblackshear: https://blakeblackshear.github.io/blakeshome-charts
+
+# URL-to-name mapping for validation scripts
+# This maps ArgoCD repoURL values to local repo names
+url_mappings:
+  'https://k8s-at-home.com/charts': k8s-at-home
+  'https://charts.external-secrets.io': external-secrets
+  'https://charts.bitnami.com/bitnami': bitnami
+  'https://openebs.github.io/charts': openebs
+  'https://1password.github.io/connect-helm-charts': onepassword
+  'https://charts.jetstack.io': jetstack
+  'https://traefik.github.io/charts': traefik
+  'https://metallb.github.io/metallb': metallb
+  'https://stakater.github.io/stakater-charts': stakater
+  'https://charts.authelia.com': authelia
+  'https://kubernetes.github.io/dashboard/': kubernetes-dashboard
+  'https://prometheus-community.github.io/helm-charts': prometheus-community
+  'https://grafana.github.io/helm-charts': grafana
+  'https://charts.min.io/': minio
+  'https://jameswynn.github.io/helm-charts': jameswynn
+  'https://twin.github.io/helm-charts': twin
+  'http://pajikos.github.io/home-assistant-helm-chart/': pajikos
+  'https://blakeblackshear.github.io/blakeshome-charts': blakeblackshear

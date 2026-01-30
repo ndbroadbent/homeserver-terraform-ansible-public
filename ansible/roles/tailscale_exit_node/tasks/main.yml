@@ -1,0 +1,98 @@
+---
+# Tailscale Exit Node Configuration
+#
+# This role installs and configures Tailscale as an exit node.
+# Uses OAuth client credentials to generate auth keys (no 90-day expiry).
+#
+# Required variables:
+#   tailscale_oauth_client_id: OAuth client ID
+#   tailscale_oauth_client_secret: OAuth client secret
+#   tailscale_accept_dns: Whether to accept DNS from Tailscale (default: true)
+#   tailscale_tags: Tags for the device (default: tag:exit-node)
+
+- name: Install python3-debian for deb822 repository management
+  ansible.builtin.apt:
+    name: python3-debian
+    state: present
+    update_cache: true
+
+- name: Add Tailscale GPG key
+  ansible.builtin.get_url:
+    url: https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg
+    dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+    mode: '0644'
+
+- name: Add Tailscale repository
+  ansible.builtin.deb822_repository:
+    name: tailscale
+    types: [deb]
+    uris: 'https://pkgs.tailscale.com/stable/ubuntu'
+    signed_by: /usr/share/keyrings/tailscale-archive-keyring.gpg
+    suites: [jammy]
+    components: [main]
+    state: present
+    enabled: true
+  notify: Update apt cache
+
+- name: Flush handlers to update apt cache before installing packages
+  ansible.builtin.meta: flush_handlers
+
+- name: Install required packages
+  ansible.builtin.apt:
+    name:
+      - tailscale
+      - curl
+      - jq
+    state: present
+
+- name: Reset failed state for tailscaled if needed
+  ansible.builtin.command: systemctl reset-failed tailscaled
+  changed_when: false
+  failed_when: false
+
+- name: Ensure tailscaled service is started
+  ansible.builtin.systemd:
+    name: tailscaled
+    state: started
+    enabled: true
+  register: tailscaled_start
+
+- name: Wait for tailscaled socket to be ready
+  ansible.builtin.wait_for:
+    path: /run/tailscale/tailscaled.sock
+    state: present
+    timeout: 30
+
+- name: Enable IP forwarding for exit node
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    state: present
+    reload: true
+
+- name: Enable IPv6 forwarding for exit node
+  ansible.posix.sysctl:
+    name: net.ipv6.conf.all.forwarding
+    value: '1'
+    state: present
+    reload: true
+
+- name: Create Tailscale configuration script
+  ansible.builtin.template:
+    src: tailscale-up.sh.j2
+    dest: /usr/local/bin/tailscale-up
+    mode: '0755'
+    owner: root
+    group: root
+  notify: Run Tailscale configuration
+
+- name: Check Tailscale status
+  ansible.builtin.command: tailscale status --json
+  register: tailscale_exit_node_status
+  changed_when: false
+  failed_when: false
+
+- name: Run Tailscale configuration if not connected
+  ansible.builtin.command: /usr/local/bin/tailscale-up
+  when: tailscale_exit_node_status.rc != 0 or (tailscale_exit_node_status.stdout | from_json).BackendState != "Running"
+  changed_when: true

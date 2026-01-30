@@ -1,0 +1,6 @@
+#!/bin/bash
+set -e
+rsync -az --delete \
+  --exclude='*.log' \
+  {{ zigbee2mqtt_data_dir }}/ \
+  {{ zigbee2mqtt_backup_destination }}

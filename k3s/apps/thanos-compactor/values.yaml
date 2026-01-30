@@ -1,0 +1,69 @@
+# Thanos Compactor for long-term metrics retention
+# Only enables compactor - other components use kube-prometheus-stack's Thanos sidecar
+# Chart: https://github.com/bitnami/charts/tree/main/bitnami/thanos
+# Values: https://github.com/bitnami/charts/blob/main/bitnami/thanos/values.yaml
+
+# Use official Thanos image (bitnami images have availability issues)
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  registry: quay.io
+  repository: thanos/thanos
+  tag: v0.36.1
+
+# Use existing objstore secret created by External Secrets
+existingObjstoreSecret: thanos-objstore-config
+
+# Disable all components except compactor
+query:
+  enabled: false
+queryFrontend:
+  enabled: false
+bucketweb:
+  enabled: false
+storegateway:
+  enabled: false
+ruler:
+  enabled: false
+receive:
+  enabled: false
+receiveDistributor:
+  enabled: false
+
+# Enable compactor with 90-day retention
+compactor:
+  enabled: true
+
+  # Retention settings - 90 days for homelab
+  # Raw resolution: full granularity data
+  retentionResolutionRaw: 90d
+  # 5-minute downsampled: medium granularity
+  retentionResolution5m: 90d
+  # 1-hour downsampled: low granularity for trends
+  retentionResolution1h: 90d
+
+  # Run compaction every 30 minutes
+  consistencyDelay: 30m
+
+  # Resource limits for homelab
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Persistence for compactor working data
+  persistence:
+    enabled: true
+    storageClass: ''
+    size: 10Gi
+
+# Metrics for Prometheus scraping
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true

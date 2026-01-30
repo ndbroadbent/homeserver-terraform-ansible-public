@@ -1,0 +1,67 @@
+---
+- name: Install and Configure K3s for CircleCI Runner in LXC Container
+  hosts: circleci_runner
+  become: true
+  vars:
+    k3s_version: 'v1.28.5+k3s1'
+    k3s_datastore_endpoint: ''
+    k3s_token: '{{ circleci_k3s_token }}'
+
+  tasks:
+    - name: Wait for container to be ready
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        delay: 10
+
+    - name: Install K3s base components
+      ansible.builtin.include_tasks: ../tasks/install_k3s_base.yml
+      vars:
+        zfs_storage_classes:
+          - name: openebs-zfs-circleci
+            poolname: rpool/circleci-runner/storage
+            annotations:
+              storageclass.kubernetes.io/is-default-class: 'true'
+
+    - name: Set up Helm repositories
+      ansible.builtin.import_tasks: circleci_runner/helm_repos.yml
+
+    - name: Create namespaces
+      ansible.builtin.import_tasks: circleci_runner/namespaces.yml
+
+    - name: Deploy Redis
+      ansible.builtin.import_tasks: circleci_runner/redis.yml
+
+    - name: Deploy MinIO
+      ansible.builtin.import_tasks: circleci_runner/minio.yml
+
+    - name: Deploy Docker Registry
+      ansible.builtin.import_tasks: circleci_runner/docker_registry.yml
+
+    - name: Set up Git Cache
+      ansible.builtin.import_tasks: circleci_runner/git_cache.yml
+
+    - name: Deploy CircleCI Runner
+      ansible.builtin.import_tasks: circleci_runner/circleci_runner.yml
+
+    - name: Set up cleanup jobs
+      ansible.builtin.import_tasks: circleci_runner/cleanup_jobs.yml
+
+    - name: Configure k3s registries
+      ansible.builtin.copy:
+        content: |
+          mirrors:
+            "localhost:5000":
+              endpoint:
+                - "http://localhost:5000"
+            "10.11.12.30:5000":
+              endpoint:
+                - "http://10.11.12.30:5000"
+        dest: /etc/rancher/k3s/registries.yaml
+        mode: '0644'
+      notify: Restart k3s
+
+  handlers:
+    - name: Restart k3s
+      ansible.builtin.service:
+        name: k3s
+        state: restarted

@@ -1,0 +1,113 @@
+# Home Assistant - Home Automation Platform
+# Chart: https://github.com/pajikos/home-assistant-helm-chart
+# Docs: https://www.home-assistant.io/
+
+# Enable host network for mDNS/SSDP device discovery
+hostNetwork: true
+dnsPolicy: ClusterFirstWithHostNet
+
+# Reloader annotations to auto-restart on config/secret changes
+podAnnotations:
+  reloader.stakater.com/auto: 'true'
+
+# Environment variables
+env:
+  - name: TZ
+    value: Pacific/Auckland
+  - name: POSTGRES_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: postgresql-credentials
+        key: postgres-password
+  - name: RECORDER_DB_URL
+    value: postgresql://postgres:$(POSTGRES_PASSWORD)@postgresql.postgresql.svc.cluster.local:5432/home_assistant
+
+# Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+# Persistence for /config
+persistence:
+  enabled: true
+  accessMode: ReadWriteOnce
+  size: 10Gi
+  storageClass: local-path
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8123
+
+# Configuration for Home Assistant
+configuration:
+  enabled: true
+  forceInit: true
+  # Trusted proxies for reverse proxy setup (Traefik)
+  trusted_proxies:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 127.0.0.0/8
+  templateConfig: |-
+    # Loads default set of integrations. Do not remove.
+    default_config:
+
+    # HTTP configuration for reverse proxy
+    http:
+      use_x_forwarded_for: true
+      trusted_proxies:
+        {{- range .Values.configuration.trusted_proxies }}
+        - {{ . }}
+        {{- end }}
+
+    # Load frontend themes from the themes folder
+    frontend:
+      themes: !include_dir_merge_named themes
+
+    # Logger configuration
+    logger:
+      default: info
+
+    # Recorder configuration - use PostgreSQL for state history
+    recorder:
+      db_url: !env_var RECORDER_DB_URL
+      purge_keep_days: 30
+      commit_interval: 1
+
+    automation: !include automations.yaml
+    script: !include scripts.yaml
+    scene: !include scenes.yaml
+
+# Liveness/readiness probes
+livenessProbe:
+  failureThreshold: 5
+  httpGet:
+    path: /
+    port: http
+    scheme: HTTP
+  periodSeconds: 30
+  timeoutSeconds: 10
+
+readinessProbe:
+  failureThreshold: 3
+  httpGet:
+    path: /
+    port: http
+    scheme: HTTP
+  periodSeconds: 10
+  timeoutSeconds: 5
+
+startupProbe:
+  httpGet:
+    path: /
+    port: http
+    scheme: HTTP
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 30

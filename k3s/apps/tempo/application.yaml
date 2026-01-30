@@ -1,0 +1,15 @@
+---
+name: tempo
+namespace: tempo
+repoURL: https://grafana.github.io/helm-charts
+chart: tempo
+version: 1.24.1
+values: values.yaml
+ignoreDifferences:
+  - group: apps
+    kind: StatefulSet
+    jqPathExpressions:
+      # Ignore env field drift - Helm outputs env: null, K8s normalizes to absent
+      - .spec.template.spec.containers[].env
+      # Ignore volumeClaimTemplates normalization (Helm outputs full spec, K8s normalizes)
+      - .spec.volumeClaimTemplates

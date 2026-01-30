@@ -1,0 +1,7 @@
+---
+name: external-secrets
+namespace: external-secrets
+repoURL: https://charts.external-secrets.io
+chart: external-secrets
+version: 0.18.0
+values: values.yaml

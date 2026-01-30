@@ -1,0 +1,127 @@
+---
+# Single source of truth for all network configuration
+networks:
+  cameras:
+    vlan_id: 20
+    subnet: 10.5.20.0/24
+    gateway: 10.5.20.1
+    static_range:
+      start: 10.5.20.1
+      end: 10.5.20.99
+    dhcp_range:
+      start: 10.5.20.100
+      end: 10.5.20.254
+
+  devices:
+    vlan_id: 30
+    subnet: 10.5.30.0/24
+    gateway: 10.5.30.1
+    static_range:
+      start: 10.5.30.1
+      end: 10.5.30.99
+    dhcp_range:
+      start: 10.5.30.100
+      end: 10.5.30.254
+
+  example-company_tailscale:
+    vlan_id: 40
+    subnet: 10.5.40.0/24
+    gateway: 10.5.40.1
+    static_range:
+      start: 10.5.40.1
+      end: 10.5.40.99
+    dhcp_range:
+      start: 10.5.40.100
+      end: 10.5.40.254
+
+  main:
+    subnet: 10.11.12.0/24
+    gateway: 10.11.12.1
+    static_range:
+      start: 10.11.12.1
+      end: 10.11.12.99
+    dhcp_range:
+      start: 10.11.12.100
+      end: 10.11.12.254
+
+    metallb:
+      pool_start: 10.11.12.12
+      pool_end: 10.11.12.20
+
+    hosts:
+      proxmox: 10.11.12.10
+      k3s: 10.11.12.11
+      traefik_lb: 10.11.12.12
+      adguard_k3s: 10.11.12.14
+      freeradius: 10.11.12.15
+      adguard: 10.11.12.21
+      nginx_proxy_manager: 10.11.12.104
+      services_pi: 10.11.12.22
+      circleci_runner: 10.11.12.30
+      webapp: 10.11.12.140
+      tailscale_exit_node: 10.11.12.31
+      example-company_tailscale: 10.11.12.32
+      data_processor: 10.11.12.34
+      openclaw: 10.11.12.35
+
+# Device definitions with MAC addresses
+# Used by: Terraform (UniFi clients), FreeRADIUS (VLAN assignment)
+devices:
+  # Main network devices
+  proxmox:
+    mac: 'XX:XX:XX:XX:XX:XX'
+    network: main
+    ip: 10.11.12.10
+    name: Proxmox VE
+    note: Proxmox Virtual Environment host
+
+  proxmox_backup_nic:
+    mac: 'XX:XX:XX:XX:XX:XX'
+    network: main
+    ip: 10.11.12.248
+    name: Proxmox Backup NIC
+    note: USB Ethernet dongle for emergency access
+
+  k3s_cluster:
+    mac: xx:xx:xx:xx:xx:xx
+    network: main
+    ip: 10.11.12.11
+    name: K3s Cluster
+    note: Kubernetes cluster container
+
+  adguard:
+    mac: xx:xx:xx:xx:xx:xx
+    network: main
+    ip: 10.11.12.21
+    name: AdGuard Home
+    note: DNS filtering and DHCP server
+
+  nginx_proxy_manager:
+    mac: XX:XX:XX:XX:XX:XX
+    network: main
+    ip: 10.11.12.104
+    name: Nginx Proxy Manager
+    note: Reverse proxy and SSL certificate management
+
+  # Camera devices (assigned to cameras VLAN)
+  living_room_camera:
+    mac: 'XX:XX:XX:XX:XX:XX'
+    network: cameras
+    ip: 10.5.20.10
+    name: Living Room Camera
+    note: Tapo C120 camera
+
+  openclaw:
+    mac: 'XX:XX:XX:XX:XX:XX'
+    network: main
+    ip: 10.11.12.35
+    name: OpenClaw
+    note: Personal AI assistant (WhatsApp, Telegram, Slack, Discord, Signal, iMessage)
+
+  # Devices network (IoT devices that need to be accessed from Main)
+  printer:
+    mac: 'XX:XX:XX:XX:XX:XX'
+    network: devices
+    ip: 10.5.30.10
+    name: Printer
+    note: Network printer on ExampleDevices WiFi

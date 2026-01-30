@@ -1,0 +1,10 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart restic-backup timer
+  ansible.builtin.systemd:
+    name: restic-backup.timer
+    state: restarted
+    enabled: true

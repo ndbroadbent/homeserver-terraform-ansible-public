@@ -1,0 +1,7 @@
+---
+- name: Configure K3s LXC Container
+  import_playbook: configure_lxc_container_on_host.yml
+  vars:
+    container_id: '{{ k3s_container_id }}'
+    container_type: 'K3s'
+    container_ip_address: '{{ static_ips.k3s_cluster }}'

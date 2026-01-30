@@ -1,0 +1,127 @@
+---
+- name: Create MinIO values.yaml
+  ansible.builtin.copy:
+    content: |
+      mode: standalone
+      deploymentUpdate:
+        type: Recreate
+      rootUser: "{{ minio_access_key }}"
+      rootPassword: "{{ minio_secret_key }}"
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "200m"
+        limits:
+          memory: "1Gi"
+          cpu: "500m"
+      persistence:
+        enabled: true
+        size: 500Gi
+        storageClass: "openebs-zfs-circleci"
+        mountPath: /data
+      service:
+        type: ClusterIP
+        port: 9000
+      consoleService:
+        type: ClusterIP
+        port: 9001
+      environment:
+        MINIO_API_REQUESTS_MAX: "1000"
+        MINIO_API_REQUESTS_DEADLINE: "10s"
+        MINIO_BROWSER: "on"
+        MINIO_COMPRESS: "on"
+        MINIO_COMPRESS_EXTENSIONS: ".tar.gz,.zip,.tgz"
+        MINIO_COMPRESS_MIME_TYPES: "application/gzip,application/zip"
+      defaultBuckets: "circleci-cache"
+      metrics:
+        serviceMonitor:
+          enabled: false
+    dest: /etc/circleci-runner/minio-values.yaml
+    mode: '0600'
+
+- name: Deploy MinIO
+  kubernetes.core.helm:
+    name: minio
+    chart_ref: minio/minio
+    release_namespace: minio
+    create_namespace: true
+    values_files:
+      - /etc/circleci-runner/minio-values.yaml
+    state: present
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: Wait for MinIO deployment
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: minio
+    name: minio
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+  register: minio_deployment
+  until: minio_deployment.resources | length > 0 and (minio_deployment.resources[0].status.readyReplicas | default(0)) > 0
+  retries: 30
+  delay: 10
+
+- name: Wait for MinIO pod to be ready
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: minio
+    label_selectors:
+      - app=minio
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    field_selectors:
+      - status.phase=Running
+  register: minio_pods
+  until: minio_pods.resources | length > 0 and minio_pods.resources[0].status.containerStatuses[0].ready | default(false)
+  retries: 30
+  delay: 10
+
+- name: Configure MinIO buckets
+  vars:
+    minio_pod: '{{ minio_pods.resources[0].metadata.name }}'
+  block:
+    - name: Set up MinIO alias
+      kubernetes.core.k8s_exec:
+        namespace: minio
+        pod: '{{ minio_pod }}'
+        command: mc alias set local http://localhost:9000 {{ minio_access_key }} {{ minio_secret_key }}
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      changed_when: false
+
+    - name: Check if MinIO bucket exists
+      kubernetes.core.k8s_exec:
+        namespace: minio
+        pod: '{{ minio_pod }}'
+        command: mc ls local/circleci-cache
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      register: bucket_check
+      failed_when: false
+      changed_when: false
+
+    - name: Create MinIO bucket
+      kubernetes.core.k8s_exec:
+        namespace: minio
+        pod: '{{ minio_pod }}'
+        command: mc mb local/circleci-cache
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      when: bucket_check.rc != 0
+
+    - name: Check MinIO bucket policy
+      kubernetes.core.k8s_exec:
+        namespace: minio
+        pod: '{{ minio_pod }}'
+        command: mc anonymous get local/circleci-cache
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      register: policy_check
+      failed_when: false
+      changed_when: false
+
+    - name: Set MinIO bucket policy to public
+      kubernetes.core.k8s_exec:
+        namespace: minio
+        pod: '{{ minio_pod }}'
+        command: mc anonymous set public local/circleci-cache
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      when: policy_check.rc != 0 or 'public' not in (policy_check.stdout | default(''))

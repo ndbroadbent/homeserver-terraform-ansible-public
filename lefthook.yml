@@ -1,0 +1,7 @@
+pre-commit:
+  parallel: false
+  commands:
+    format:
+      glob: '*.{js,jsx,ts,tsx,json,yml,yaml,md}'
+      run: npx prettier --write --ignore-unknown {staged_files} && git add {staged_files}
+      stage_fixed: true

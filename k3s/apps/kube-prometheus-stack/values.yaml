@@ -1,0 +1,290 @@
+# kube-prometheus-stack Helm Chart values
+# Chart: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
+# Version: 77.12.0
+
+# Prometheus Configuration
+prometheus:
+  enabled: true
+  prometheusSpec:
+    # Retention and storage (short-term, Thanos handles long-term)
+    retention: 15d
+    retentionSize: '20GB'
+
+    # Storage configuration
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ['ReadWriteOnce']
+          resources:
+            requests:
+              storage: 25Gi
+
+    # Resource requests/limits
+    resources:
+      requests:
+        cpu: 500m
+        memory: 2Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+
+    # Service monitors for custom services
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+
+    # Enable remote write to receive metrics from Tempo metrics generator
+    enableRemoteWriteReceiver: true
+
+    # Enable features for exemplars (links traces to metrics)
+    enableFeatures:
+      - exemplar-storage
+
+    # Additional scrape configs for external targets
+    additionalScrapeConfigs:
+      # Proxmox host node-exporter
+      - job_name: 'proxmox-host'
+        static_configs:
+          - targets: ['10.11.12.10:9100']
+            labels:
+              instance: 'proxmox'
+              environment: 'homelab'
+
+    # Thanos sidecar configuration for long-term storage
+    thanos:
+      objectStorageConfig:
+        existingSecret:
+          name: thanos-objstore-config
+          key: objstore.yml
+
+# Alertmanager Configuration
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ['ReadWriteOnce']
+          resources:
+            requests:
+              storage: 5Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+# Grafana Configuration
+grafana:
+  enabled: true
+
+  # Admin credentials from External Secret
+  admin:
+    existingSecret: grafana-credentials
+    userKey: admin-user
+    passwordKey: admin-password
+
+  # Modern UI configuration with shadcn/ui inspired theme
+  grafana.ini:
+    server:
+      root_url: 'https://grafana.home.example.com'
+
+    # Theme and UI
+    users:
+      default_theme: dark
+      viewers_can_edit: false
+
+    # Feature toggles for modern UI
+    feature_toggles:
+      enable: 'publicDashboards'
+
+    # Analytics disabled for privacy
+    analytics:
+      check_for_updates: false
+      reporting_enabled: false
+
+    # Auth settings
+    auth.anonymous:
+      enabled: false
+
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 80
+
+  # Disable default ingress (using Traefik IngressRoute instead)
+  ingress:
+    enabled: false
+
+  # Resources
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  # Persistence for dashboards and plugins
+  persistence:
+    enabled: true
+    size: 10Gi
+    accessModes:
+      - ReadWriteOnce
+
+  # Use Recreate strategy for RWO volumes
+  deploymentStrategy:
+    type: Recreate
+
+  # Plugins to install (only non-Angular plugins)
+  plugins:
+    - grafana-clock-panel
+
+  # Data sources - full observability stack
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        # Prometheus - primary metrics store
+        - name: Prometheus
+          type: prometheus
+          url: http://kube-prometheus-stack-prometheus.monitoring:9090
+          access: proxy
+          isDefault: true
+          jsonData:
+            timeInterval: 30s
+            exemplarTraceIdDestinations:
+              - name: trace_id
+                datasourceUid: tempo
+
+        # Loki - log aggregation
+        - name: Loki
+          type: loki
+          url: http://loki-gateway.loki.svc.cluster.local
+          access: proxy
+          jsonData:
+            derivedFields:
+              - datasourceUid: tempo
+                matcherRegex: '"trace_id":"([a-f0-9]+)"'
+                name: TraceID
+                url: '$${__value.raw}'
+
+        # Tempo - distributed tracing
+        - name: Tempo
+          uid: tempo
+          type: tempo
+          url: http://tempo.tempo.svc.cluster.local:3200
+          access: proxy
+          jsonData:
+            tracesToLogsV2:
+              datasourceUid: loki
+              filterByTraceID: true
+              filterBySpanID: false
+            tracesToMetrics:
+              datasourceUid: prometheus
+            serviceMap:
+              datasourceUid: prometheus
+            nodeGraph:
+              enabled: true
+            lokiSearch:
+              datasourceUid: loki
+
+  # Disable auto-generated default datasource to avoid duplicates
+  sidecar:
+    datasources:
+      defaultDatasourceEnabled: false
+    # Disable sidecar dashboards to avoid duplicate warnings
+    # Built-in dashboards are loaded via direct volume mounts (default provider)
+    dashboards:
+      enabled: false
+
+  # Load custom dashboards via direct ConfigMap mount (not sidecar)
+  # This avoids the duplicate provider issue
+  dashboardsConfigMaps:
+    zfs: grafana-dashboard-zfs-overview
+
+# Node Exporter - runs on K3s nodes
+prometheus-node-exporter:
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# Kube State Metrics - K8s cluster metrics
+kube-state-metrics:
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# Operator configuration
+prometheusOperator:
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# Default dashboards
+defaultRules:
+  create: true
+  rules:
+    alertmanager: true
+    etcd: false
+    configReloaders: true
+    general: true
+    k8s: true
+    kubeApiserverAvailability: true
+    kubeApiserverBurnrate: true
+    kubeApiserverHistogram: true
+    kubeApiserverSlos: true
+    kubelet: true
+    kubeProxy: false
+    kubePrometheusGeneral: true
+    kubePrometheusNodeRecording: true
+    kubernetesApps: true
+    kubernetesResources: true
+    kubernetesStorage: true
+    kubernetesSystem: true
+    kubeScheduler: false
+    kubeStateMetrics: true
+    network: true
+    node: true
+    nodeExporterAlerting: true
+    nodeExporterRecording: true
+    prometheus: true
+    prometheusOperator: true
+
+# Disable components we don't need
+kubeApiServer:
+  enabled: false
+
+kubelet:
+  enabled: true
+
+kubeControllerManager:
+  enabled: false
+
+coreDns:
+  enabled: true
+
+kubeEtcd:
+  enabled: false
+
+kubeScheduler:
+  enabled: false
+
+kubeProxy:
+  enabled: false

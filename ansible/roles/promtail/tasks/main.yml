@@ -1,0 +1,149 @@
+---
+- name: Get dpkg architecture
+  ansible.builtin.command: dpkg --print-architecture
+  register: promtail_dpkg_arch
+  changed_when: false
+
+- name: Set architecture variable
+  ansible.builtin.set_fact:
+    promtail_arch: "{{ 'arm64' if promtail_dpkg_arch.stdout == 'arm64' else ('arm' if promtail_dpkg_arch.stdout == 'armhf' else 'amd64') }}"
+
+- name: Create promtail group
+  ansible.builtin.group:
+    name: '{{ promtail_group }}'
+    system: true
+    state: present
+
+- name: Create promtail user
+  ansible.builtin.user:
+    name: '{{ promtail_user }}'
+    group: '{{ promtail_group }}'
+    system: true
+    shell: /usr/sbin/nologin
+    home: '{{ promtail_install_dir }}'
+    create_home: false
+
+- name: Create promtail directories
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: '{{ promtail_user }}'
+    group: '{{ promtail_group }}'
+    mode: '0755'
+  loop:
+    - '{{ promtail_install_dir }}'
+    - '/var/lib/promtail'
+
+- name: Check if promtail binary exists
+  ansible.builtin.stat:
+    path: '{{ promtail_install_dir }}/promtail'
+  register: promtail_binary
+
+- name: Check installed promtail version
+  ansible.builtin.command:
+    cmd: '{{ promtail_install_dir }}/promtail --version'
+  register: promtail_installed_version
+  changed_when: false
+  failed_when: false
+  when: promtail_binary.stat.exists
+
+- name: Download and install promtail
+  when: >
+    not promtail_binary.stat.exists or
+    (promtail_installed_version.stdout is defined and promtail_version not in promtail_installed_version.stdout)
+  block:
+    - name: Install unzip
+      ansible.builtin.apt:
+        name: unzip
+        state: present
+        update_cache: true
+
+    - name: Download promtail
+      ansible.builtin.get_url:
+        url: '{{ promtail_binary_url }}'
+        dest: '/tmp/promtail.zip'
+        mode: '0644'
+
+    - name: Extract promtail
+      ansible.builtin.unarchive:
+        src: '/tmp/promtail.zip'
+        dest: '/tmp'
+        remote_src: true
+
+    - name: Install promtail binary
+      ansible.builtin.copy:
+        src: '/tmp/promtail-linux-{{ promtail_arch }}'
+        dest: '{{ promtail_install_dir }}/promtail'
+        owner: '{{ promtail_user }}'
+        group: '{{ promtail_group }}'
+        mode: '0755'
+        remote_src: true
+      notify: Restart promtail
+
+    - name: Clean up temporary files
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: absent
+      loop:
+        - '/tmp/promtail.zip'
+        - '/tmp/promtail-linux-{{ promtail_arch }}'
+
+- name: Add promtail user to systemd-journal group (for journal access)
+  ansible.builtin.user:
+    name: '{{ promtail_user }}'
+    groups: systemd-journal
+    append: true
+  when: ansible_service_mgr == 'systemd'
+
+- name: Add promtail user to adm group (for /var/log access)
+  ansible.builtin.user:
+    name: '{{ promtail_user }}'
+    groups: adm
+    append: true
+  failed_when: false
+
+- name: Check if www-data group exists
+  ansible.builtin.getent:
+    database: group
+    key: www-data
+  register: promtail_www_data_group
+  failed_when: false
+
+- name: Add promtail user to www-data group (for nginx log access)
+  ansible.builtin.user:
+    name: '{{ promtail_user }}'
+    groups: www-data
+    append: true
+  when: promtail_www_data_group.ansible_facts.getent_group['www-data'] is defined
+
+- name: Add loki.home.example.com to /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '.*loki\.home\.youruser\.com$'
+    line: '10.11.12.12 loki.home.example.com'
+    state: present
+
+- name: Template promtail configuration
+  ansible.builtin.template:
+    src: promtail-config.yaml.j2
+    dest: '{{ promtail_config_file }}'
+    owner: '{{ promtail_user }}'
+    group: '{{ promtail_group }}'
+    mode: '0600'
+  notify: Restart promtail
+
+- name: Template promtail systemd service
+  ansible.builtin.template:
+    src: promtail.service.j2
+    dest: /etc/systemd/system/promtail.service
+    mode: '0644'
+  notify:
+    - Reload systemd
+    - Restart promtail
+
+- name: Enable and start promtail
+  ansible.builtin.systemd:
+    name: promtail
+    state: started
+    enabled: true
+    daemon_reload: true

@@ -1,0 +1,56 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: freeradius
+  namespace: freeradius
+  labels:
+    app.kubernetes.io/name: freeradius
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: freeradius
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: freeradius
+      annotations:
+        reloader.stakater.com/auto: 'true'
+    spec:
+      containers:
+        - name: freeradius
+          image: freeradius/freeradius-server:3.2.7
+          args:
+            - '-X' # Debug mode for logs (remove in production if too verbose)
+          ports:
+            - name: auth
+              containerPort: 1812
+              protocol: UDP
+            - name: acct
+              containerPort: 1813
+              protocol: UDP
+          volumeMounts:
+            - name: clients-config
+              mountPath: /etc/raddb/clients.conf
+              subPath: clients.conf
+            - name: authorize-config
+              mountPath: /etc/raddb/mods-config/files/authorize
+              subPath: authorize
+          resources:
+            requests:
+              memory: '64Mi'
+              cpu: '50m'
+            limits:
+              memory: '256Mi'
+              cpu: '500m'
+          securityContext:
+            readOnlyRootFilesystem: false
+            runAsNonRoot: false
+      volumes:
+        - name: clients-config
+          secret:
+            secretName: freeradius-clients
+        - name: authorize-config
+          configMap:
+            name: freeradius-authorize

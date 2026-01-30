@@ -1,0 +1,71 @@
+# MinIO Helm Chart values
+# Chart: https://github.com/minio/minio/tree/master/helm/minio
+# Version: 5.4.0
+
+# Standalone mode for single-node homelab
+mode: standalone
+
+# Number of MinIO containers (1 for standalone)
+replicas: 1
+
+# Use existing secret for root credentials (from 1Password)
+existingSecret: minio-credentials
+
+# Persistence configuration
+persistence:
+  enabled: true
+  storageClass: openebs-zfs-tank
+  accessMode: ReadWriteOnce
+  size: 200Gi
+
+# Resource limits
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: '9000'
+
+# Console service
+consoleService:
+  type: ClusterIP
+  port: '9001'
+
+# Disable ingress (using Traefik IngressRoute)
+ingress:
+  enabled: false
+
+consoleIngress:
+  enabled: false
+
+# Create buckets for observability stack
+buckets:
+  - name: loki
+    policy: none
+    purge: false
+    versioning: false
+  - name: tempo
+    policy: none
+    purge: false
+    versioning: false
+  - name: thanos
+    policy: none
+    purge: false
+    versioning: false
+
+# Service account for MinIO
+serviceAccount:
+  create: true
+  name: minio
+
+# Metrics for Prometheus scraping
+metrics:
+  serviceMonitor:
+    enabled: true
+    includeNode: true

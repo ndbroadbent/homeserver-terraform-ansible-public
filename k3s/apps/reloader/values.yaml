@@ -1,0 +1,20 @@
+---
+# Reloader configuration
+reloader:
+  # Watch all namespaces by default
+  watchGlobally: true
+
+  # Enable auto-reload for deployments with annotations
+  autoReloadAll: false
+
+  # Logging configuration
+  logLevel: info
+
+# Resource limits
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi

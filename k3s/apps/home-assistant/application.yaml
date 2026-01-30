@@ -1,0 +1,15 @@
+---
+name: home-assistant
+namespace: home-assistant
+repoURL: http://pajikos.github.io/home-assistant-helm-chart/
+chart: home-assistant
+version: 0.3.32
+values: values.yaml
+ignoreDifferences:
+  - group: apps
+    kind: StatefulSet
+    jqPathExpressions:
+      # Ignore restartedAt annotation from manual rollout restarts
+      - .spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]
+      # Ignore volumeClaimTemplates normalization (Helm outputs full spec, K8s normalizes)
+      - .spec.volumeClaimTemplates

@@ -1,0 +1,82 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: helm-apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ['missingkey=error']
+  generators:
+    - git:
+        repoURL: git@github.com:youruser/homeserver-terraform-ansible.git
+        revision: HEAD
+        files:
+          - path: k3s/apps/**/application.yaml
+  template:
+    metadata:
+      name: '{{.name}}'
+      labels:
+        app.kubernetes.io/instance: root
+    spec:
+      project: default
+      # ── multiple sources ──
+      sources:
+        # 1) external chart
+        - repoURL: '{{.repoURL}}'
+          chart: '{{.chart}}'
+          targetRevision: '{{.version}}'
+          helm:
+            releaseName: '{{.name}}'
+            valueFiles:
+              - $values/k3s/apps/{{.name}}/{{.values}} # points at your git file
+        # 2) git repo holding values.yaml
+        - repoURL: git@github.com:youruser/homeserver-terraform-ansible.git
+          targetRevision: HEAD
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{.namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - ServerSideDiff=true
+          - RespectIgnoreDifferences=true
+  # decide chart vs path here
+  templatePatch: |
+    spec:
+      sources:
+        - repoURL: '{{ .repoURL }}'
+          {{- if hasKey . "localChartPath" }}
+          path: '{{ .localChartPath }}'
+          {{- end }}
+          chart: '{{ .chart }}'
+          targetRevision: '{{ .version }}'
+          helm:
+            releaseName: '{{ .name }}'
+            valueFiles:
+              - $values/k3s/apps/{{ .name }}/{{ .values }}
+        - repoURL: git@github.com:youruser/homeserver-terraform-ansible.git
+          targetRevision: HEAD
+          ref: values
+      {{- if hasKey . "ignoreDifferences" }}
+      ignoreDifferences: {{ .ignoreDifferences | toYaml | nindent 8 }}
+      {{- end }}
+      {{- if hasKey . "syncOptions" }}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - ServerSideDiff=true
+          - RespectIgnoreDifferences=true
+          {{- range .syncOptions }}
+          - {{ . }}
+          {{- end }}
+      {{- end }}

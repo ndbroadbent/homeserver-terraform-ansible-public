@@ -1,0 +1,15 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alexa-shopping-list
+  namespace: alexa-shopping-list-config
+spec:
+  selector:
+    app: alexa-shopping-list
+  ports:
+    - port: 4000
+      targetPort: 4000
+      name: http
+      nodePort: 30400
+  type: NodePort

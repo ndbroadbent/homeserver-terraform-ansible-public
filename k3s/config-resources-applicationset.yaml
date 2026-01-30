@@ -1,0 +1,33 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: config-resources
+  namespace: argocd
+spec:
+  generators:
+    - git:
+        repoURL: git@github.com:youruser/homeserver-terraform-ansible.git
+        revision: HEAD
+        directories:
+          - path: k3s/resources/*
+  template:
+    metadata:
+      name: '{{path.basename}}'
+      labels:
+        app.kubernetes.io/instance: root
+    spec:
+      project: default
+      source:
+        repoURL: git@github.com:youruser/homeserver-terraform-ansible.git
+        targetRevision: HEAD
+        path: '{{path}}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{path.basename}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

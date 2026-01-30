@@ -1,0 +1,7 @@
+---
+name: frigate
+namespace: frigate
+repoURL: https://blakeblackshear.github.io/blakeshome-charts
+chart: frigate
+version: 7.8.0
+values: values.yaml

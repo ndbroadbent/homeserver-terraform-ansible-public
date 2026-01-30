@@ -1,0 +1,44 @@
+---
+# Hardware-specific configuration for Gigabyte X870-GAMING-X-WIFI7
+# This file can be deleted when upgrading to different hardware
+
+- name: Install DKMS and build tools for custom drivers
+  ansible.builtin.apt:
+    name:
+      - dkms
+      - build-essential
+      - linux-headers-amd64
+      - git
+    state: present
+
+- name: Install Proxmox headers for current kernel
+  ansible.builtin.apt:
+    name: 'proxmox-headers-{{ ansible_kernel }}'
+    state: present
+
+- name: Check if r8125 driver is already installed
+  ansible.builtin.command: dkms status r8125/9.015.00
+  register: r8125_status
+  failed_when: false
+  changed_when: false
+
+- name: Clone r8125 driver repository
+  ansible.builtin.git:
+    repo: https://github.com/awesometic/realtek-r8125-dkms.git
+    dest: /tmp/r8125-driver
+    version: HEAD
+    force: true
+  when: "'installed' not in r8125_status.stdout"
+
+- name: Install r8125 driver via DKMS
+  ansible.builtin.command: /tmp/r8125-driver/dkms-install.sh
+  args:
+    chdir: /tmp/r8125-driver
+  when: "'installed' not in r8125_status.stdout"
+  changed_when: true
+
+- name: Cleanup r8125 driver source
+  ansible.builtin.file:
+    path: /tmp/r8125-driver
+    state: absent
+  when: "'installed' not in r8125_status.stdout"

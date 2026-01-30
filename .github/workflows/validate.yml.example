@@ -1,0 +1,41 @@
+---
+name: Validate Config
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  validate-and-format:
+    runs-on: ubuntu-latest
+    container:
+      image: youruser/homeserver-dev:latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Mark repo as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Setup validation tools
+        run: ./scripts/setup/dev.sh
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: ./scripts/validate/format.sh --check
+
+      - name: Validate Terraform
+        run: ./scripts/validate/terraform.sh
+
+      - name: Validate Ansible
+        run: ./scripts/validate/ansible.sh
+
+      - name: Validate Shell scripts
+        run: ./scripts/validate/shellcheck.sh
+
+      - name: Validate K3S config and Helm charts
+        run: ./scripts/validate/k3s.sh

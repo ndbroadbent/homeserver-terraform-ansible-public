@@ -1,0 +1,13 @@
+---
+- name: Configure Personal Tailscale Exit Node
+  hosts: tailscale_exit_node
+  become: true
+
+  vars:
+    tailscale_oauth_client_id: '{{ tailscale_exit_node_oauth_client_id }}'
+    tailscale_oauth_client_secret: '{{ tailscale_exit_node_oauth_client_secret }}'
+    tailscale_accept_dns: true
+    tailscale_tags: 'tag:homeserver'
+
+  roles:
+    - tailscale_exit_node

@@ -1,0 +1,57 @@
+---
+auth:
+  enabled: true
+
+service:
+  main:
+    type: NodePort
+    ports:
+      mqtt:
+        port: 1883
+        nodePort: 31883
+
+persistence:
+  data:
+    enabled: true
+    storageClass: 'openebs-zfs-rpool'
+    size: 1Gi
+    accessMode: ReadWriteOnce
+  configinc:
+    enabled: true
+    storageClass: 'openebs-zfs-rpool'
+    size: 100Mi
+    accessMode: ReadWriteOnce
+  mqtt-auth:
+    enabled: true
+    type: secret
+    name: mqtt-auth
+    mountPath: /tmp/secrets
+    readOnly: true
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+initContainers:
+  passwd-init:
+    image: eclipse-mosquitto:2.0
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "Creating password file with multiple users..."
+        # Create passwd file with Zigbee2MQTT user
+        mosquitto_passwd -c -b /mosquitto/configinc/passwd "$(cat /tmp/secrets/z2m-username)" "$(cat /tmp/secrets/z2m-password)"
+        # Add Home Assistant user
+        mosquitto_passwd -b /mosquitto/configinc/passwd "$(cat /tmp/secrets/ha-username)" "$(cat /tmp/secrets/ha-password)"
+        echo "password_file /mosquitto/configinc/passwd" > /mosquitto/configinc/auth.conf
+    volumeMounts:
+      - name: mqtt-auth
+        mountPath: /tmp/secrets
+        readOnly: true
+      - name: configinc
+        mountPath: /mosquitto/configinc

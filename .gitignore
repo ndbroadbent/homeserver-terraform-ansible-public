@@ -1,0 +1,59 @@
+node_modules
+
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+terraform.rc
+.terraformrc
+
+venv
+
+# 1Password secrets
+.op-env
+*.op-env
+
+# Ansible
+*.retry
+.vault_pass
+*.log
+.ansible-password-salts.yml
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE/Editor files
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# SSH keys
+*.pem
+*.key
+id_rsa*
+!id_rsa*.pub
+
+# Backup files
+*.backup
+*.bak
+
+.helm-repo-update.timestamp
+.helm-repo-config.hash
+.k3s-validation-cache/

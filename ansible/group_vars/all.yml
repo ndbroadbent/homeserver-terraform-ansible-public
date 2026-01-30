@@ -1,0 +1,26 @@
+---
+# Load network configuration from canonical source
+networks: "{{ (lookup('file', '../../config/network.yaml') | from_yaml).networks }}"
+devices: "{{ (lookup('file', '../../config/network.yaml') | from_yaml).devices }}"
+
+# Convenience aliases for common network values
+static_ips:
+  gateway: '{{ networks.main.gateway }}'
+  homeserver: '{{ networks.main.hosts.proxmox }}'
+  k3s_cluster: '{{ networks.main.hosts.k3s }}'
+  traefik_lb: '{{ networks.main.hosts.traefik_lb }}'
+  adguardhome_dns: '{{ networks.main.hosts.adguard }}'
+  home_assistant: '{{ networks.main.hosts.home_assistant }}'
+  services_pi: '{{ networks.main.hosts.services_pi }}'
+  circleci_runner: '{{ networks.main.hosts.circleci_runner }}'
+
+main_network:
+  subnet: '{{ networks.main.subnet }}'
+  static_range_start: '{{ networks.main.static_range.start }}'
+  static_range_end: '{{ networks.main.static_range.end }}'
+  dhcp_range_start: '{{ networks.main.dhcp_range.start }}'
+  dhcp_range_end: '{{ networks.main.dhcp_range.end }}'
+
+metallb_config:
+  ip_range_start: '{{ networks.main.metallb.pool_start }}'
+  ip_range_end: '{{ networks.main.metallb.pool_end }}'

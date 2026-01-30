@@ -1,0 +1,32 @@
+---
+# Run system upgrades on all hosts
+# Run with: ./run_playbook.sh playbooks/upgrade.yml
+# Or limit to specific host: ./run_playbook.sh playbooks/upgrade.yml --limit services-pi
+
+- name: Upgrade system packages
+  hosts: all
+  become: true
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      ansible.builtin.apt:
+        upgrade: dist
+      register: upgrade_result
+
+    - name: Display upgrade results
+      ansible.builtin.debug:
+        msg: "{{ upgrade_result.stdout_lines | default(['No changes']) }}"
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Notify if reboot is required
+      ansible.builtin.debug:
+        msg: 'REBOOT REQUIRED on {{ inventory_hostname }}'
+      when: reboot_required.stat.exists

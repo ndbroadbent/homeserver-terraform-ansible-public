@@ -1,0 +1,231 @@
+---
+# Common K3s installation tasks for LXC containers
+# Usage:
+#   - name: Install K3s base components
+#     ansible.builtin.include_tasks: ../tasks/install_k3s_base.yml
+#     vars:
+#       k3s_version: 'v1.28.5+k3s1'
+#       k3s_token: '{{ k3s_cluster_token | default(ansible_machine_id) }}'
+#       enable_zfs_support: true  # Optional, defaults to true
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install required packages for k3s
+  ansible.builtin.apt:
+    name: '{{ k3s_base_packages + (k3s_extra_packages | default([])) }}'
+    state: present
+  vars:
+    k3s_base_packages:
+      - curl
+      - git
+      - vim
+      - jq
+      - ca-certificates
+      - iptables
+      - socat
+      - conntrack
+      - ipset
+      - python3-pip
+
+- name: Install kubernetes Python package via pip
+  ansible.builtin.pip:
+    name: kubernetes>=24.2.0
+    executable: pip3
+
+- name: Download k3s installation script
+  ansible.builtin.get_url:
+    url: https://get.k3s.io
+    dest: /tmp/k3s-install.sh
+    mode: '0755'
+
+- name: Install k3s server
+  environment:
+    INSTALL_K3S_VERSION: '{{ k3s_version }}'
+    K3S_TOKEN: '{{ k3s_token }}'
+    INSTALL_K3S_EXEC: '--disable traefik --disable servicelb --write-kubeconfig-mode 644'
+  ansible.builtin.command: /tmp/k3s-install.sh
+  args:
+    creates: /usr/local/bin/k3s
+
+- name: Wait for k3s service to be active
+  ansible.builtin.systemd:
+    name: k3s
+    state: started
+    enabled: true
+
+- name: Wait for k3s to be ready
+  ansible.builtin.command: k3s kubectl get nodes
+  register: k3s_ready
+  until: k3s_ready.rc == 0
+  retries: 30
+  delay: 5
+  changed_when: false
+
+- name: Create .kube directory
+  ansible.builtin.file:
+    path: /root/.kube
+    state: directory
+    mode: '0755'
+
+- name: Copy kubeconfig to standard location
+  ansible.builtin.copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: /root/.kube/config
+    remote_src: true
+    mode: '0600'
+
+- name: Install Helm
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
+
+- name: Install Helm diff plugin
+  ansible.builtin.command: helm plugin install https://github.com/databus23/helm-diff
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: helm_diff_install
+  failed_when: helm_diff_install.rc != 0 and "already exists" not in helm_diff_install.stderr
+  changed_when: helm_diff_install.rc == 0
+
+# OpenEBS ZFS LocalPV installation
+- name: Install OpenEBS for ZFS support
+  when:
+    - enable_zfs_support | default(true)
+    - install_openebs_via_helm | default(true)
+  block:
+    - name: Add OpenEBS Helm repository
+      kubernetes.core.helm_repository:
+        name: openebs
+        repo_url: https://openebs.github.io/charts
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Update Helm repositories
+      ansible.builtin.command: helm repo update
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      changed_when: false
+
+    - name: Create OpenEBS namespace
+      kubernetes.core.k8s:
+        name: openebs
+        api_version: v1
+        kind: Namespace
+        state: present
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Create OpenEBS values file
+      ansible.builtin.copy:
+        content: |
+          # Disable components we don't need
+          jiva:
+            enabled: false
+          cstor:
+            enabled: false
+          mayastor:
+            enabled: false
+          localprovisioner:
+            enabled: false
+          ndm:
+            enabled: false
+          ndmOperator:
+            enabled: false
+
+          # Enable ZFS LocalPV operator only
+          zfs-localpv:
+            enabled: true
+            zfsNode:
+              allowedTopology: 'kubernetes.io/os=linux'
+        dest: /tmp/openebs-values.yaml
+        mode: '0644'
+
+    - name: Deploy OpenEBS
+      kubernetes.core.helm:
+        name: openebs
+        chart_ref: openebs/openebs
+        chart_version: '3.10.0'
+        release_namespace: openebs
+        create_namespace: true
+        values_files:
+          - /tmp/openebs-values.yaml
+        state: present
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Set default OpenEBS ZFS manifest version
+      ansible.builtin.set_fact:
+        openebs_zfs_manifest_version: 'v2.4.0'
+      when: openebs_zfs_manifest_version is not defined
+
+    - name: Define OpenEBS ZFS CRD manifests
+      ansible.builtin.set_fact:
+        openebs_zfs_crd_manifests:
+          - filename: zfsvolume-crd.yaml
+            resource: zfsvolumes.zfs.openebs.io
+          - filename: zfsnode-crd.yaml
+            resource: zfsnodes.zfs.openebs.io
+          - filename: zfssnapshot-crd.yaml
+            resource: zfssnapshots.zfs.openebs.io
+          - filename: zfsbackup-crd.yaml
+            resource: zfsbackups.zfs.openebs.io
+          - filename: zfsrestore-crd.yaml
+            resource: zfsrestores.zfs.openebs.io
+
+    - name: Download OpenEBS ZFS CRD manifests
+      ansible.builtin.get_url:
+        url: 'https://raw.githubusercontent.com/openebs/zfs-localpv/{{ openebs_zfs_manifest_version }}/deploy/yamls/{{ item.filename }}'
+        dest: '/tmp/{{ item.filename }}'
+        mode: '0644'
+        force: true
+      loop: '{{ openebs_zfs_crd_manifests }}'
+      loop_control:
+        label: '{{ item.filename }}'
+
+    - name: Ensure OpenEBS ZFS CRDs are present
+      kubernetes.core.k8s:
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        state: present
+        src: '/tmp/{{ item.filename }}'
+      loop: '{{ openebs_zfs_crd_manifests }}'
+      loop_control:
+        label: '{{ item.resource }}'
+
+    - name: Wait for OpenEBS deployment
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: StatefulSet
+        namespace: openebs
+        name: openebs-zfs-localpv-controller
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      register: openebs_deployment
+      until: openebs_deployment.resources | length > 0 and (openebs_deployment.resources[0].status.readyReplicas | default(0)) > 0
+      retries: 30
+      delay: 10
+
+    - name: Create ZFS StorageClass
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: '{{ item.name }}'
+            annotations: '{{ item.annotations | default({}) }}'
+          provisioner: zfs.csi.openebs.io
+          parameters:
+            poolname: '{{ item.poolname }}'
+            fstype: 'zfs'
+            compression: 'lz4'
+            dedup: 'off'
+            recordsize: '128k'
+          reclaimPolicy: Delete
+          volumeBindingMode: WaitForFirstConsumer
+          allowVolumeExpansion: true
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      loop: '{{ zfs_storage_classes }}'
+      when: zfs_storage_classes is defined

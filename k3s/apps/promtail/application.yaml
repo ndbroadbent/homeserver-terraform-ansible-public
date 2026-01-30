@@ -1,0 +1,7 @@
+---
+name: promtail
+namespace: promtail
+repoURL: https://grafana.github.io/helm-charts
+chart: promtail
+version: 6.17.1
+values: values.yaml

@@ -1,0 +1,27 @@
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: frigate
+  namespace: traefik
+  annotations:
+    gethomepage.dev/enabled: 'true'
+    gethomepage.dev/name: Frigate
+    gethomepage.dev/description: NVR with AI Object Detection
+    gethomepage.dev/group: Smart Home
+    gethomepage.dev/icon: frigate.png
+    gethomepage.dev/href: https://frigate.home.example.com
+    gethomepage.dev/pod-selector: ''
+    gethomepage.dev/siteMonitor: http://frigate.frigate.svc.cluster.local:5000
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`frigate.home.example.com`)
+      kind: Rule
+      services:
+        - name: frigate
+          namespace: frigate
+          port: 5000
+  tls:
+    secretName: home-youruser-com-tls

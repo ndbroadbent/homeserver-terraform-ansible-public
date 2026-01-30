@@ -1,0 +1,100 @@
+---
+- name: Create Docker cleanup CronJob
+  kubernetes.core.k8s:
+    definition:
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: docker-cleanup
+        namespace: kube-system
+      spec:
+        schedule: '0 2 * * *' # Daily at 2 AM
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                hostNetwork: true
+                hostPID: true
+                containers:
+                  - name: docker-cleanup
+                    image: docker:dind
+                    command:
+                      - /bin/sh
+                      - -c
+                      - |
+                        # Remove unused images older than 30 days
+                        docker image prune -a -f --filter "until=720h"
+                        # Remove unused containers older than 30 days
+                        docker container prune -f --filter "until=720h"
+                        # Remove unused volumes (keep these aggressive)
+                        docker volume prune -f
+                        # Remove unused networks (keep these aggressive)
+                        docker network prune -f
+                        # Remove unused build cache older than 30 days
+                        docker builder prune -a -f --filter "until=720h"
+                    volumeMounts:
+                      - name: docker-sock
+                        mountPath: /var/run/docker.sock
+                      - name: containerd-sock
+                        mountPath: /run/containerd/containerd.sock
+                volumes:
+                  - name: docker-sock
+                    hostPath:
+                      path: /var/run/docker.sock
+                      type: Socket
+                  - name: containerd-sock
+                    hostPath:
+                      path: /run/containerd/containerd.sock
+                      type: Socket
+                restartPolicy: OnFailure
+                tolerations:
+                  - operator: Exists
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+
+- name: Create K3s/containerd cleanup CronJob
+  kubernetes.core.k8s:
+    definition:
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: containerd-cleanup
+        namespace: kube-system
+      spec:
+        schedule: '0 3 * * *' # Daily at 3 AM
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                hostNetwork: true
+                hostPID: true
+                containers:
+                  - name: containerd-cleanup
+                    image: rancher/k3s:v1.28.5-k3s1
+                    command:
+                      - /bin/sh
+                      - -c
+                      - |
+                        # Use crictl to clean up unused container images
+                        crictl rmi --prune
+                        # Clean up unused containers
+                        crictl rm --all
+                        # Clean up unused pods
+                        crictl rmp --all
+                    volumeMounts:
+                      - name: containerd-sock
+                        mountPath: /run/containerd/containerd.sock
+                      - name: k3s-config
+                        mountPath: /var/lib/rancher/k3s
+                volumes:
+                  - name: containerd-sock
+                    hostPath:
+                      path: /run/containerd/containerd.sock
+                      type: Socket
+                  - name: k3s-config
+                    hostPath:
+                      path: /var/lib/rancher/k3s
+                      type: Directory
+                restartPolicy: OnFailure
+                tolerations:
+                  - operator: Exists
+    kubeconfig: /etc/rancher/k3s/k3s.yaml

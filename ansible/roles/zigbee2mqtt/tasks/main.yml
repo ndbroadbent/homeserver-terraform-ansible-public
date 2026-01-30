@@ -1,0 +1,189 @@
+---
+- name: Remove old NodeSource repository key
+  become: true
+  ansible.builtin.apt_key:
+    url: https://deb.nodesource.com/gpgkey/nodesource.gpg.key
+    state: absent
+
+- name: Remove old NodeSource repository
+  become: true
+  ansible.builtin.apt_repository:
+    repo: 'deb https://deb.nodesource.com/node_16.x {{ ansible_distribution_release }} main'
+    state: absent
+
+- name: Download NodeSource GPG key
+  become: true
+  ansible.builtin.get_url:
+    url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+    dest: /tmp/nodesource.gpg.key
+    mode: '0644'
+
+- name: Dearmor NodeSource GPG key
+  become: true
+  ansible.builtin.shell: gpg --dearmor < /tmp/nodesource.gpg.key > /usr/share/keyrings/nodesource.gpg
+  args:
+    creates: /usr/share/keyrings/nodesource.gpg
+
+- name: Add NodeSource Node.js 20.x repository
+  become: true
+  ansible.builtin.apt_repository:
+    repo: 'deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main'
+    state: present
+    filename: nodesource
+    update_cache: true
+
+- name: Install Node.js and npm
+  become: true
+  ansible.builtin.apt:
+    name:
+      - nodejs
+      - git
+    state: present
+    update_cache: true
+
+- name: Create zigbee2mqtt user
+  become: true
+  ansible.builtin.user:
+    name: '{{ zigbee2mqtt_user }}'
+    system: true
+    shell: /bin/bash
+    home: '{{ zigbee2mqtt_install_dir }}'
+    create_home: false
+  when: zigbee2mqtt_user != ansible_user
+
+- name: Create zigbee2mqtt directories
+  become: true
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: '{{ zigbee2mqtt_user }}'
+    group: '{{ zigbee2mqtt_user }}'
+    mode: '0755'
+  loop:
+    - '{{ zigbee2mqtt_install_dir }}'
+    - '{{ zigbee2mqtt_data_dir }}'
+
+- name: Check if zigbee2mqtt is already installed
+  ansible.builtin.stat:
+    path: '{{ zigbee2mqtt_install_dir }}/package.json'
+  register: zigbee2mqtt_installed
+
+- name: Clone zigbee2mqtt repository
+  become: true
+  ansible.builtin.git:
+    repo: https://github.com/Koenkk/zigbee2mqtt.git
+    dest: '{{ zigbee2mqtt_install_dir }}'
+    version: '{{ zigbee2mqtt_version }}'
+  when: not zigbee2mqtt_installed.stat.exists
+  notify: Restart Zigbee2MQTT
+
+- name: Set zigbee2mqtt directory ownership
+  become: true
+  ansible.builtin.file:
+    path: '{{ zigbee2mqtt_install_dir }}'
+    owner: '{{ zigbee2mqtt_user }}'
+    group: '{{ zigbee2mqtt_user }}'
+    recurse: true
+  when: not zigbee2mqtt_installed.stat.exists
+
+- name: Install npm dependencies
+  become: true
+  become_user: '{{ zigbee2mqtt_user }}'
+  community.general.npm:
+    path: '{{ zigbee2mqtt_install_dir }}'
+    state: present
+    production: true
+  when: not zigbee2mqtt_installed.stat.exists
+  notify: Restart Zigbee2MQTT
+
+- name: Template zigbee2mqtt configuration
+  become: true
+  ansible.builtin.template:
+    src: configuration.yaml.j2
+    dest: '{{ zigbee2mqtt_data_dir }}/configuration.yaml'
+    owner: '{{ zigbee2mqtt_user }}'
+    group: '{{ zigbee2mqtt_user }}'
+    mode: '0600'
+  notify: Restart Zigbee2MQTT
+
+- name: Create zigbee2mqtt systemd service
+  become: true
+  ansible.builtin.template:
+    src: zigbee2mqtt.service.j2
+    dest: /etc/systemd/system/zigbee2mqtt.service
+    mode: '0644'
+  notify:
+    - Reload systemd
+    - Restart Zigbee2MQTT
+
+- name: Enable and start zigbee2mqtt service
+  become: true
+  ansible.builtin.systemd:
+    name: zigbee2mqtt
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# Backup configuration - rsync to homeserver
+- name: Create .ssh directory for backup user
+  become: true
+  ansible.builtin.file:
+    path: '/home/{{ zigbee2mqtt_user }}/.ssh'
+    state: directory
+    owner: '{{ zigbee2mqtt_user }}'
+    group: '{{ zigbee2mqtt_user }}'
+    mode: '0700'
+  when: zigbee2mqtt_backup_enabled
+
+- name: Install SSH private key for backup
+  become: true
+  ansible.builtin.copy:
+    dest: '/home/{{ zigbee2mqtt_user }}/.ssh/id_ed25519'
+    content: '{{ services_pi_ssh_private_key }}'
+    owner: '{{ zigbee2mqtt_user }}'
+    group: '{{ zigbee2mqtt_user }}'
+    mode: '0600'
+  when: zigbee2mqtt_backup_enabled
+
+- name: Add homeserver to known_hosts
+  become: true
+  become_user: '{{ zigbee2mqtt_user }}'
+  ansible.builtin.known_hosts:
+    name: '10.11.12.10'
+    key: "{{ lookup('pipe', 'ssh-keyscan -t ecdsa 10.11.12.10 2>/dev/null') }}"
+    path: '/home/{{ zigbee2mqtt_user }}/.ssh/known_hosts'
+  when: zigbee2mqtt_backup_enabled
+
+- name: Create backup script
+  become: true
+  ansible.builtin.template:
+    src: backup.sh.j2
+    dest: '{{ zigbee2mqtt_data_dir }}/backup.sh'
+    owner: '{{ zigbee2mqtt_user }}'
+    group: '{{ zigbee2mqtt_user }}'
+    mode: '0755'
+  when: zigbee2mqtt_backup_enabled
+
+- name: Remove old HA backup script
+  become: true
+  ansible.builtin.file:
+    path: '{{ zigbee2mqtt_data_dir }}/backup_to_ha_server.sh'
+    state: absent
+
+- name: Configure backup cron job
+  become: true
+  ansible.builtin.cron:
+    name: 'zigbee2mqtt backup to homeserver'
+    job: '{{ zigbee2mqtt_data_dir }}/backup.sh'
+    minute: '0'
+    hour: '*/2'
+    user: '{{ zigbee2mqtt_user }}'
+  when: zigbee2mqtt_backup_enabled
+
+- name: Remove old HA backup cron job
+  become: true
+  ansible.builtin.cron:
+    name: 'zigbee2mqtt backup'
+    job: '/opt/zigbee2mqtt/data/backup_to_ha_server.sh'
+    state: absent
+    user: '{{ zigbee2mqtt_user }}'

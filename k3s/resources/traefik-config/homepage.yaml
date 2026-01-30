@@ -1,0 +1,21 @@
+---
+# Homepage IngressRoute
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: homepage
+  namespace: traefik
+  annotations:
+    gethomepage.dev/enabled: 'false'
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`home.example.com`)
+      kind: Rule
+      services:
+        - name: homepage
+          namespace: homepage
+          port: 3000
+  tls:
+    secretName: home-youruser-com-tls

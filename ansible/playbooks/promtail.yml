@@ -1,0 +1,115 @@
+---
+# Deploy Promtail to all infrastructure hosts
+# Run with: ./scripts/ansible/promtail.sh
+
+- name: Deploy Promtail to Proxmox host
+  hosts: homeserver
+  become: true
+  vars:
+    promtail_extra_scrape_configs: |
+      - job_name: pve-cluster
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: pve-cluster
+              host: {{ inventory_hostname }}
+              __path__: /var/log/pve-cluster/*.log
+      - job_name: pve
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: pve
+              host: {{ inventory_hostname }}
+              __path__: /var/log/pve/*.log
+      - job_name: pveproxy
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: pveproxy
+              host: {{ inventory_hostname }}
+              __path__: /var/log/pveproxy/*.log
+  roles:
+    - promtail
+
+- name: Deploy Promtail to CircleCI runner
+  hosts: circleci-runner
+  become: true
+  roles:
+    - promtail
+
+- name: Deploy Promtail to Raspberry Pi
+  hosts: services-pi
+  become: true
+  vars:
+    # Use older promtail version compatible with Raspbian Bullseye (glibc 2.31)
+    promtail_version: '2.8.7'
+    promtail_extra_scrape_configs: |
+      - job_name: adguard-querylog
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: adguard-querylog
+              host: {{ inventory_hostname }}
+              __path__: /opt/AdGuardHome/data/querylog.json
+        pipeline_stages:
+          - json:
+              expressions:
+                client: QH
+                question: QT
+                answer: Answer
+                upstream: Upstream
+          - labels:
+              client:
+      - job_name: zigbee2mqtt
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: zigbee2mqtt
+              host: {{ inventory_hostname }}
+              __path__: /opt/zigbee2mqtt/data/log/**/*.log
+  pre_tasks:
+    - name: Install acl package for setfacl
+      ansible.builtin.apt:
+        name: acl
+        state: present
+
+    - name: Set ACL for promtail to read AdGuard querylog
+      ansible.posix.acl:
+        path: /opt/AdGuardHome/data/querylog.json
+        entity: promtail
+        etype: user
+        permissions: r
+        state: present
+      failed_when: false
+  roles:
+    - promtail
+
+- name: Deploy Promtail to Web App
+  hosts: webapp
+  become: true
+  vars:
+    promtail_extra_scrape_configs: |
+      - job_name: webapp
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: webapp
+              host: {{ inventory_hostname }}
+              __path__: /var/log/webapp/*.log
+      - job_name: nginx
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: nginx
+              host: {{ inventory_hostname }}
+              __path__: /var/log/nginx/*.log
+  roles:
+    - promtail
+

@@ -1,0 +1,7 @@
+---
+name: cert-manager
+namespace: cert-manager
+repoURL: https://charts.jetstack.io
+chart: cert-manager
+version: v1.18.1
+values: values.yaml

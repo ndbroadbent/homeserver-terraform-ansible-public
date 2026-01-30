@@ -1,0 +1,25 @@
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: grafana
+  namespace: monitoring
+  annotations:
+    gethomepage.dev/enabled: 'true'
+    gethomepage.dev/name: Grafana
+    gethomepage.dev/description: Metrics, Logs & Traces
+    gethomepage.dev/group: Monitoring
+    gethomepage.dev/icon: grafana.png
+    gethomepage.dev/href: https://grafana.home.example.com
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=grafana
+    gethomepage.dev/siteMonitor: http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local:80
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`grafana.home.example.com`)
+      kind: Rule
+      services:
+        - name: kube-prometheus-stack-grafana
+          port: 80
+  tls: {}

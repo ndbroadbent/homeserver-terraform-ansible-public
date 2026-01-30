@@ -1,0 +1,24 @@
+---
+# Configure LXC container console autologin from the Proxmox host
+# Usage: include this task and set lxc_vmid and autologin_user variables
+- name: Check current container getty configuration
+  ansible.builtin.shell: |
+    pct exec {{ lxc_vmid }} -- grep -E '^ExecStart=' /lib/systemd/system/container-getty@.service || echo "ExecStart=NOT_FOUND"
+  register: current_getty_config
+  changed_when: false
+  failed_when: false
+
+- name: Configure autologin for LXC container console
+  ansible.builtin.shell: |
+    set -o pipefail
+    pct exec {{ lxc_vmid }} -- sed -i \
+      's|^ExecStart=.*|ExecStart=-/sbin/agetty --autologin {{ autologin_user | default("root") }} --noclear --keep-baud tty%I 115200,38400,9600 $TERM|' \
+      /lib/systemd/system/container-getty@.service
+  register: autologin_config
+  when: >
+    '--autologin ' + (autologin_user | default('root')) not in current_getty_config.stdout
+  changed_when: true
+  failed_when: false # Container might not be running yet
+  notify:
+    - Reload systemd daemon in container
+    - Restart container getty service

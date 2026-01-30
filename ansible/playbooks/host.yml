@@ -1,0 +1,523 @@
+---
+- name: Configure Proxmox Host Server
+  hosts: homeserver
+  become: true
+  tasks:
+    - name: Configure systemd .link file for lan0 (onboard NIC)
+      ansible.builtin.copy:
+        dest: /etc/systemd/network/10-lan0.link
+        content: |
+          # Rename RTL8125 2.5GbE NIC to lan0 for Proxmox bridge
+          # .link files run earlier than udev rules, before networking starts
+          [Match]
+          MACAddress=XX:XX:XX:XX:XX:XX
+
+          [Link]
+          Name=lan0
+        mode: '0644'
+        owner: root
+        group: root
+      register: lan0_link_result
+      notify: Update initramfs
+
+    - name: Configure systemd .link file for lan1 (USB backup NIC)
+      ansible.builtin.copy:
+        dest: /etc/systemd/network/10-lan1.link
+        content: |
+          # Rename USB Ethernet dongle to lan1 for backup network access
+          [Match]
+          MACAddress=XX:XX:XX:XX:XX:XX
+
+          [Link]
+          Name=lan1
+        mode: '0644'
+        owner: root
+        group: root
+      register: lan1_link_result
+      notify: Update initramfs
+
+    - name: Remove old udev rules for interface naming
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: absent
+      loop:
+        - /etc/udev/rules.d/70-lan0.rules
+        - /etc/udev/rules.d/70-persistent-net.rules
+
+    - name: Configure network interfaces
+      ansible.builtin.copy:
+        dest: /etc/network/interfaces
+        content: |
+          auto lo
+          iface lo inet loopback
+
+          # on-board 2.5 GbE NIC
+          auto lan0
+          iface lan0 inet manual
+
+          # Proxmox bridge (static IP in reserved range)
+          auto vmbr0
+          iface vmbr0 inet static
+              address {{ static_ips.homeserver }}/24
+              gateway {{ static_ips.gateway }}
+              dns-nameservers {{ static_ips.gateway }}
+              bridge-ports lan0
+              bridge-stp off
+              bridge-fd 0
+
+          # USB Ethernet backup (auto-configure via DHCP for emergency access)
+          auto lan1
+          iface lan1 inet dhcp
+
+          source /etc/network/interfaces.d/*
+        mode: '0644'
+        owner: root
+        group: root
+        backup: true
+      register: network_interfaces_result
+      notify: Restart networking
+
+    - name: Add Tailscale repository
+      ansible.builtin.deb822_repository:
+        name: tailscale
+        types: [deb]
+        uris: 'https://pkgs.tailscale.com/stable/ubuntu'
+        signed_by: 'https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg'
+        suites: [jammy]
+        components: [main]
+        state: present
+        enabled: true
+
+    # ensure key exists once
+    - name: Install Coral EdgeTPU GPG key
+      ansible.builtin.get_url:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        dest: /usr/share/keyrings/coral.gpg
+        mode: '0644'
+
+    # define repo – this writes /etc/apt/sources.list.d/coral-edgetpu.sources
+    - name: Add Google Coral EdgeTPU repository
+      ansible.builtin.deb822_repository:
+        name: coral-edgetpu
+        types: deb
+        uris: https://packages.cloud.google.com/apt
+        suites: coral-edgetpu-stable
+        components: main
+        signed_by: /usr/share/keyrings/coral.gpg
+        enabled: true
+        state: present
+
+    - name: Add NodeJS repository
+      ansible.builtin.deb822_repository:
+        name: nodesource
+        types: [deb]
+        uris: 'https://deb.nodesource.com/node_22.x'
+        signed_by: '/usr/share/keyrings/nodesource.gpg'
+        suites: [nodistro]
+        components: [main]
+        architectures: [amd64]
+        state: present
+        enabled: true
+
+    - name: Add NVIDIA Container Toolkit repository
+      ansible.builtin.deb822_repository:
+        name: nvidia-container-toolkit
+        types: [deb]
+        uris: 'https://nvidia.github.io/libnvidia-container/stable/deb/amd64'
+        signed_by: '/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg'
+        suites: [/]
+        state: present
+        enabled: true
+
+    - name: Add Proxmox VE repository
+      ansible.builtin.deb822_repository:
+        name: proxmox-pve
+        types: [deb]
+        uris: 'http://download.proxmox.com/debian/pve'
+        suites: [bookworm]
+        components: [pve-no-subscription]
+        state: present
+        enabled: true
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 86400 # 24 hours
+
+    - name: Install essential packages
+      ansible.builtin.apt:
+        name:
+          - jq
+          - git
+          - curl
+          - vim
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - pv
+          - python3-pip
+        state: present
+
+    - name: Create youruser user
+      ansible.builtin.user:
+        name: youruser
+        comment: Admin User
+        shell: /bin/bash
+        create_home: true
+        groups: sudo
+        append: true
+
+    - name: Install python3-venv for virtual environments
+      ansible.builtin.apt:
+        name: python3-venv
+        state: present
+
+    - name: Create Python virtual environment for Ansible
+      ansible.builtin.command: python3 -m venv /opt/ansible-venv
+      args:
+        creates: /opt/ansible-venv/bin/python
+
+    - name: Install Python packages in virtual environment
+      ansible.builtin.pip:
+        name:
+          - proxmoxer
+          - requests
+          - mitogen
+        virtualenv: /opt/ansible-venv
+        state: present
+
+    - name: Install Tailscale
+      ansible.builtin.apt:
+        name: tailscale
+        state: present
+
+    - name: Wait for Tailscale daemon to be ready
+      ansible.builtin.systemd:
+        name: tailscaled
+        state: started
+      register: tailscaled_started
+      until: tailscaled_started is succeeded
+      retries: 10
+      delay: 3
+
+    - name: Install Coral TPU support library
+      ansible.builtin.apt:
+        name: libedgetpu1-std
+        state: present
+
+    - name: Include hardware-specific configuration
+      ansible.builtin.include_tasks: "../hardware/{{ ansible_product_name | lower | replace(' ', '-') }}.yml"
+      when: ansible_product_name is defined
+
+    - name: Load existing secret hashes
+      ansible.builtin.include_tasks: '../tasks/manage_secrets.yml'
+    - name: Hash current secrets
+      ansible.builtin.set_fact:
+        tailscale_key_hash_new: "{{ tailscale_auth_key | hash('sha256') }}"
+        vnc_pass_hash_new: "{{ vnc_password | hash('sha256') }}"
+      no_log: true
+
+    - name: Set old secrets hash variables
+      ansible.builtin.set_fact:
+        tailscale_key_hash_old: "{{ existing_secrets.tailscale_key_hash | default('') }}"
+        vnc_pass_hash_old: "{{ existing_secrets.vnc_password_hash | default('') }}"
+      no_log: true
+
+    - name: Create Tailscale configuration script
+      ansible.builtin.copy:
+        dest: /usr/local/bin/tailscale-up
+        content: |
+          #!/bin/bash
+          set -e
+
+          tailscale up \
+            --authkey="{{ tailscale_auth_key }}" \
+            --accept-routes \
+            --advertise-routes=10.11.12.0/24,10.5.20.0/24,10.5.30.0/24 \
+            --advertise-exit-node \
+            --accept-dns=false \
+            --timeout=300s
+        mode: '0755'
+        owner: root
+        group: root
+      register: tailscale_script_result
+      notify:
+        - Run Tailscale configuration script
+        - Restart tailscale
+
+    - name: Ensure Tailscale is configured with correct routes
+      ansible.builtin.command: /usr/local/bin/tailscale-up
+      register: tailscale_up_result
+      changed_when: false
+
+    - name: Enable IP forwarding for subnet routing
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        state: present
+        reload: true
+
+    - name: Enable IPv6 forwarding for subnet routing
+      ansible.posix.sysctl:
+        name: net.ipv6.conf.all.forwarding
+        value: '1'
+        state: present
+        reload: true
+
+    - name: Check current UDP GRO forwarding status
+      ansible.builtin.command: ethtool -k vmbr0
+      register: gro_status
+      changed_when: false
+      failed_when: false
+
+    - name: Configure UDP GRO forwarding for vmbr0
+      ansible.builtin.command: ethtool -K vmbr0 rx-udp-gro-forwarding on
+      when: "'rx-udp-gro-forwarding: off' in gro_status.stdout"
+      register: gro_result
+      failed_when: false
+      changed_when: gro_result.rc == 0
+
+    - name: Install VNC server
+      ansible.builtin.apt:
+        name: x11vnc
+        state: present
+
+    - name: Configure x11vnc service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/x11vnc.service
+        content: |
+          [Unit]
+          Description=VNC on the live X session
+          After=lightdm.service
+          Wants=lightdm.service
+
+          [Service]
+          Type=simple
+          ExecStartPre=/bin/bash -c 'until pgrep Xorg; do sleep 1; done'
+          ExecStart=/usr/bin/x11vnc -display :0 -auth guess -rfbauth /root/.vnc/passwd -forever -shared -noxdamage -repeat -rfbport 5900
+          Restart=on-failure
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: '0644'
+      notify: Restart x11vnc
+
+    - name: Create VNC password directory
+      ansible.builtin.file:
+        path: /root/.vnc
+        state: directory
+        mode: '0700'
+
+    - name: Create Ansible facts directory
+      ansible.builtin.file:
+        path: /etc/ansible/facts.d
+        state: directory
+        mode: '0755'
+
+    - name: Hash the desired VNC password (deterministic)
+      ansible.builtin.set_fact:
+        vnc_pass_hash_new: "{{ vnc_password | hash('sha256') }}"
+      no_log: true
+
+    - name: Update x11vnc password when the hash changes
+      ansible.builtin.command: x11vnc -storepasswd "{{ vnc_password }}" /root/.vnc/passwd
+      when:
+        - vnc_password is defined
+        - vnc_pass_hash_new != vnc_pass_hash_old
+      no_log: true
+      changed_when: vnc_password is defined and vnc_pass_hash_new != vnc_pass_hash_old
+
+    - name: Update secrets hash file
+      ansible.builtin.include_tasks: '../tasks/update_secrets.yml'
+      vars:
+        new_secret_hashes:
+          tailscale_key_hash: '{{ tailscale_key_hash_new }}'
+          vnc_password_hash: '{{ vnc_pass_hash_new }}'
+        secret_hashes_changed: '{{ tailscale_key_hash_new != tailscale_key_hash_old or vnc_pass_hash_new != vnc_pass_hash_old }}'
+
+    - name: Create SSH directory
+      ansible.builtin.file:
+        path: /root/.ssh
+        state: directory
+        mode: '0700'
+        owner: root
+        group: root
+
+    - name: Install SSH private key
+      ansible.builtin.copy:
+        dest: /root/.ssh/id_rsa
+        content: '{{ host_ssh_private_key }}'
+        mode: '0600'
+        owner: root
+        group: root
+      no_log: true
+
+    - name: Install SSH public key
+      ansible.builtin.copy:
+        dest: /root/.ssh/id_rsa.pub
+        content: '{{ host_ssh_public_key }}'
+        mode: '0644'
+        owner: root
+        group: root
+
+    - name: Install AWS SSH private key
+      ansible.builtin.copy:
+        dest: /root/.ssh/id_aws
+        content: '{{ host_ssh_aws_private_key }}'
+        mode: '0600'
+        owner: root
+        group: root
+      no_log: true
+
+    - name: Install AWS SSH public key
+      ansible.builtin.copy:
+        dest: /root/.ssh/id_aws.pub
+        content: '{{ host_ssh_aws_public_key }}'
+        mode: '0644'
+        owner: root
+        group: root
+
+    - name: Create SSH directory for youruser user
+      ansible.builtin.file:
+        path: /home/youruser/.ssh
+        state: directory
+        mode: '0700'
+        owner: youruser
+        group: youruser
+
+    - name: Install SSH public key for youruser user
+      ansible.builtin.copy:
+        dest: /home/youruser/.ssh/authorized_keys
+        content: '{{ user_ssh_public_key }}'
+        mode: '0600'
+        owner: youruser
+        group: youruser
+
+    - name: Add services-pi SSH key to root authorized_keys (for backup rsync)
+      ansible.posix.authorized_key:
+        user: root
+        key: '{{ services_pi_ssh_public_key }}'
+        comment: 'services-pi-backup'
+        state: present
+
+    - name: Add openclaw SSH key to root authorized_keys
+      ansible.posix.authorized_key:
+        user: root
+        key: '{{ openclaw_ssh_public_key }}'
+        comment: 'openclaw@homeserver'
+        state: present
+
+    - name: Create central backup directories
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /mnt/tank/backups/services-pi
+        - /mnt/tank/backups/services-pi/zigbee2mqtt
+
+    - name: Enable x11vnc service
+      ansible.builtin.systemd:
+        name: x11vnc
+        enabled: true
+        daemon_reload: true
+
+    - name: Add 'll' alias to /etc/bash.bashrc (system-wide)
+      ansible.builtin.lineinfile:
+        path: /etc/bash.bashrc
+        line: "alias ll='ls -la'"
+        regexp: '^alias ll='
+        state: present
+
+    - name: Add 'll' alias to root's .bashrc
+      ansible.builtin.lineinfile:
+        path: /root/.bashrc
+        line: "alias ll='ls -la'"
+        regexp: '^alias ll='
+        state: present
+
+    - name: Add 'll' alias to /etc/skel/.bashrc (for new users)
+      ansible.builtin.lineinfile:
+        path: /etc/skel/.bashrc
+        line: "alias ll='ls -la'"
+        regexp: '^alias ll='
+        state: present
+
+    - name: Fix Proxmox 8.4 DSA key generation issue for LXC containers
+      ansible.builtin.lineinfile:
+        path: /usr/share/perl5/PVE/LXC/Setup/Base.pm
+        regexp: ".*'ssh_host_dsa_key'.*"
+        state: absent
+      notify: Restart proxmox services
+
+    - name: Gather absolute ZFS library paths
+      ansible.builtin.shell: |
+        set -o pipefail
+        for lib in zfs zpool nvpair uutil zfs_core; do
+          echo "${lib}_path=$(readlink -f \
+            $(ls /usr/lib/x86_64-linux-gnu/lib${lib}.so.* | sort -V | tail -1))"
+        done
+      register: zfs_libs
+      changed_when: false
+
+    - name: Build dict for template
+      ansible.builtin.set_fact:
+        zfs_libraries: >-
+          {{
+            zfs_libs.stdout_lines
+            | map('split', '=')
+            | items2dict(key_name=0, value_name=1)
+          }}
+
+    - name: Save config/zfs-library-paths.yaml locally
+      ansible.builtin.copy:
+        dest: '{{ playbook_dir }}/../../config/zfs-library-paths.yaml'
+        content: |
+          # ZFS library paths for K3s container configuration
+          {{ zfs_libraries | to_nice_yaml(indent=2) }}
+        mode: '0644'
+      delegate_to: localhost
+      connection: local
+      become: false
+
+  handlers:
+    - name: Run Tailscale configuration script
+      ansible.builtin.command: /usr/local/bin/tailscale-up
+      changed_when: false
+
+    - name: Restart tailscale
+      ansible.builtin.systemd:
+        name: tailscaled
+        state: restarted
+
+    - name: Update initramfs
+      ansible.builtin.command: update-initramfs -u
+      changed_when: true
+
+    - name: Restart networking
+      ansible.builtin.systemd:
+        name: networking
+        state: restarted
+
+    - name: Restart x11vnc
+      ansible.builtin.systemd:
+        name: x11vnc
+        state: restarted
+
+    - name: Restart proxmox services
+      ansible.builtin.systemd:
+        name: '{{ item }}'
+        state: restarted
+      loop:
+        - pveproxy
+        - pvedaemon
+
+- name: Import Prometheus Node Exporter playbook
+  import_playbook: prometheus_node_exporter.yml
+- name: Import ZFS configuration playbook
+  import_playbook: zfs.yml
+- name: Import Samba shares configuration playbook
+  import_playbook: samba_shares.yml

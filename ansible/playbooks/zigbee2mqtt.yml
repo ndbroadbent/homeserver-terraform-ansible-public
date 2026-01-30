@@ -1,0 +1,6 @@
+---
+- name: Configure Zigbee2MQTT on Raspberry Pi
+  hosts: services-pi
+  become: true
+  roles:
+    - zigbee2mqtt

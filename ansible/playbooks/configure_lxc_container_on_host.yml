@@ -1,0 +1,226 @@
+---
+- name: Configure LXC Container for Kubernetes
+  hosts: homeserver
+  become: true
+  vars:
+    container_name: "{{ container_type | default('container') }}"
+    container_ip: "{{ container_ip_address | default('') }}"
+
+  tasks:
+    - name: Verify container exists (managed by Terraform)
+      ansible.builtin.command: pct status {{ container_id }}
+      register: container_status
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if container doesn't exist
+      ansible.builtin.fail:
+        msg: '{{ container_name }} container {{ container_id }} not found. Please run Terraform to create it first.'
+      when: container_status.rc != 0
+
+    - name: Ensure container is running
+      ansible.builtin.command: pct start {{ container_id }}
+      register: start_result
+      failed_when:
+        - start_result.rc != 0
+        - "'already running' not in start_result.stderr"
+      changed_when: "'already running' not in start_result.stderr"
+
+    - name: Configure console autologin for container
+      ansible.builtin.include_tasks: ../tasks/configure_lxc_autologin.yml
+      vars:
+        lxc_vmid: '{{ container_id }}'
+        autologin_user: root
+
+    - name: Load ZFS library paths for LXC configuration
+      ansible.builtin.include_vars:
+        file: ../../config/zfs-library-paths.yaml
+        name: zfs_libs
+
+    - name: Define LXC configuration lines
+      ansible.builtin.set_fact:
+        lxc_config:
+          - 'lxc.apparmor.profile: unconfined'
+          - 'lxc.cgroup2.devices.allow: a'
+          - 'lxc.cap.drop: '
+          - 'lxc.mount.auto: proc:rw sys:rw cgroup:rw'
+          - 'lxc.cgroup2.devices.allow: c 10:200 rwm'
+          - 'lxc.mount.entry: /dev/kmsg dev/kmsg none defaults,bind,create=file'
+          - 'lxc.cgroup2.devices.allow: c 1:11 rwm'
+          - 'lxc.mount.entry: /dev/zfs dev/zfs none bind,create=file 0 0'
+          - 'lxc.mount.entry: /proc/spl proc/spl none bind 0 0'
+          - 'lxc.mount.entry: /sys/module/zfs sys/module/zfs none bind 0 0'
+          - 'lxc.mount.entry: /usr/sbin/zfs usr/sbin/zfs none bind,ro,create=file 0 0'
+          - 'lxc.mount.entry: /usr/sbin/zpool usr/sbin/zpool none bind,ro,create=file 0 0'
+          # NVIDIA GPU passthrough (major 195)
+          - 'lxc.cgroup2.devices.allow: c 195:* rwm'
+          - 'lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file 0 0'
+          - 'lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file 0 0'
+          - 'lxc.mount.entry: /dev/nvidia-modeset dev/nvidia-modeset none bind,optional,create=file 0 0'
+          - 'lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file 0 0'
+          - 'lxc.mount.entry: /dev/nvidia-uvm-tools dev/nvidia-uvm-tools none bind,optional,create=file 0 0'
+          # NVIDIA libraries for CUDA support
+          - 'lxc.mount.entry: /usr/lib/x86_64-linux-gnu/libcuda.so usr/lib/x86_64-linux-gnu/libcuda.so none bind,ro,optional,create=file 0 0'
+          - 'lxc.mount.entry: /usr/lib/x86_64-linux-gnu/libcuda.so.1 usr/lib/x86_64-linux-gnu/libcuda.so.1 none bind,ro,optional,create=file 0 0'
+          - 'lxc.mount.entry: /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1 usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1 none bind,ro,optional,create=file 0 0'
+          # noqa: yaml[line-length]
+          - 'lxc.mount.entry: /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1 usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1 none bind,ro,optional,create=file 0 0'
+          # noqa: yaml[line-length]
+          - 'lxc.mount.entry: /usr/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1 usr/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1 none bind,ro,optional,create=file 0 0'
+          - 'lxc.mount.entry: /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1 usr/lib/x86_64-linux-gnu/libnvcuvid.so.1 none bind,ro,optional,create=file 0 0'
+          # USB passthrough for Coral TPU (major 189)
+          - 'lxc.cgroup2.devices.allow: c 189:* rwm'
+          - 'lxc.mount.entry: /dev/bus/usb dev/bus/usb none bind,optional,create=dir 0 0'
+
+    - name: Add ZFS library mount entries to config
+      ansible.builtin.set_fact:
+        lxc_config: "{{ lxc_config + ['lxc.mount.entry: ' + item.value + ' ' + item.value | regex_replace('^/', '') + ' none bind,ro,create=file 0 0'] }}"
+      loop: '{{ zfs_libs | dict2items }}'
+      loop_control:
+        label: '{{ item.key }}'
+
+    - name: Add advanced LXC configuration
+      ansible.builtin.lineinfile:
+        path: /etc/pve/lxc/{{ container_id }}.conf
+        line: '{{ item }}'
+        state: present
+      loop: '{{ lxc_config }}'
+      register: lxc_config_result
+
+    - name: Restart container if configuration changed # noqa no-handler
+      ansible.builtin.command: pct reboot {{ container_id }}
+      when: lxc_config_result.changed
+      changed_when: false
+
+    - name: Wait for container to restart
+      ansible.builtin.wait_for:
+        port: 22
+        host: '{{ container_ip }}'
+        delay: 10
+        timeout: 120
+      when:
+        - lxc_config_result.changed
+        - container_ip != ''
+
+    - name: Check if SSH keys are already configured
+      ansible.builtin.shell: |
+        pct exec {{ container_id }} -- test -f /root/.ssh/authorized_keys
+      register: ssh_keys_exist
+      failed_when: false
+      changed_when: false
+
+    - name: Configure SSH keys in container
+      when: ssh_keys_exist.rc != 0
+      block:
+        - name: Create .ssh directory in container
+          ansible.builtin.command: pct exec {{ container_id }} -- mkdir -p /root/.ssh
+          changed_when: true
+        - name: Set .ssh directory permissions in container
+          ansible.builtin.command: pct exec {{ container_id }} -- chmod 700 /root/.ssh
+          changed_when: true
+        - name: Copy SSH public keys to container
+          ansible.builtin.shell: |
+            set -o pipefail
+            {
+              echo "{{ host_ssh_public_key }}"
+              echo "{{ user_ssh_public_key }}"
+            } | pct exec {{ container_id }} -- tee /root/.ssh/authorized_keys > /dev/null
+            pct exec {{ container_id }} -- chmod 600 /root/.ssh/authorized_keys
+          changed_when: true
+
+    - name: Get kernel version
+      ansible.builtin.command: uname -r
+      register: kernel_version
+      changed_when: false
+
+    - name: Check if kernel boot config exists in container
+      ansible.builtin.command: pct exec {{ container_id }} -- test -f /boot/config-{{ kernel_version.stdout }}
+      register: kernel_config_exists
+      failed_when: false
+      changed_when: false
+
+    - name: Copy kernel boot configuration to container
+      ansible.builtin.command: pct push {{ container_id }} /boot/config-{{ kernel_version.stdout }} /boot/config-{{ kernel_version.stdout }}
+      when: kernel_config_exists.rc != 0
+      changed_when: true
+
+    - name: Check if conf-kmsg script exists
+      ansible.builtin.command: pct exec {{ container_id }} -- test -f /usr/local/bin/conf-kmsg.sh
+      register: conf_kmsg_script_exists
+      failed_when: false
+      changed_when: false
+
+    - name: Create conf-kmsg script in container
+      ansible.builtin.shell: |
+        pct exec {{ container_id }} -- tee /usr/local/bin/conf-kmsg.sh > /dev/null <<'EOF'
+        #!/bin/sh -e
+        if [ ! -e /dev/kmsg ]; then
+            ln -s /dev/console /dev/kmsg
+        fi
+
+        mount --make-rshared /
+        EOF
+        pct exec {{ container_id }} -- chmod 755 /usr/local/bin/conf-kmsg.sh
+      when: conf_kmsg_script_exists.rc != 0
+      changed_when: true
+
+    - name: Check if conf-kmsg service exists
+      ansible.builtin.command: pct exec {{ container_id }} -- test -f /etc/systemd/system/conf-kmsg.service
+      register: conf_kmsg_service_exists
+      failed_when: false
+      changed_when: false
+
+    - name: Create conf-kmsg systemd service in container
+      ansible.builtin.shell: |
+        pct exec {{ container_id }} -- tee /etc/systemd/system/conf-kmsg.service > /dev/null <<'EOF'
+        [Unit]
+        Description=Make sure /dev/kmsg exists and setup shared mounts
+        After=local-fs.target
+        Before=k3s.service
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/usr/local/bin/conf-kmsg.sh
+        TimeoutSec=30s
+
+        [Install]
+        WantedBy=multi-user.target
+        EOF
+      when: conf_kmsg_service_exists.rc != 0
+      changed_when: true
+      notify: Reload systemd daemon in container
+
+    - name: Check if conf-kmsg service is enabled
+      ansible.builtin.shell: |
+        pct exec {{ container_id }} -- systemctl is-enabled conf-kmsg.service 2>/dev/null || echo "disabled"
+      register: conf_kmsg_enabled
+      changed_when: false
+
+    - name: Enable conf-kmsg service in container
+      ansible.builtin.command: pct exec {{ container_id }} -- systemctl enable conf-kmsg.service
+      when: conf_kmsg_enabled.stdout != "enabled"
+      changed_when: true
+
+    - name: Check if conf-kmsg service is running
+      ansible.builtin.shell: |
+        pct exec {{ container_id }} -- systemctl is-active conf-kmsg.service 2>/dev/null || echo "inactive"
+      register: conf_kmsg_active
+      changed_when: false
+
+    - name: Start conf-kmsg service in container
+      ansible.builtin.command: pct exec {{ container_id }} -- systemctl start conf-kmsg.service
+      when: conf_kmsg_active.stdout != "active"
+      changed_when: true
+      failed_when: false # Service might fail if container kernel doesn't support it
+
+  handlers:
+    - name: Reload systemd daemon in container
+      ansible.builtin.command: pct exec {{ container_id }} -- systemctl daemon-reload
+      failed_when: false # Service might not be running yet
+      changed_when: false
+
+    - name: Restart container getty service
+      ansible.builtin.command: pct exec {{ container_id }} -- systemctl restart container-getty@1.service
+      failed_when: false # Service might not be running yet
+      changed_when: false

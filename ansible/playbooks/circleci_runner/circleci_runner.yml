@@ -1,0 +1,58 @@
+---
+- name: Create CircleCI runner directory
+  ansible.builtin.file:
+    path: /etc/circleci-runner
+    state: directory
+    mode: '0755'
+
+- name: Create CircleCI runner values.yaml
+  ansible.builtin.copy:
+    content: |
+      agent:
+        resourceClasses:
+          example/homeserver:
+            token: {{ circleci_runner_token }}
+            spec:
+              containers:
+                - resources:
+                    limits:
+                      cpu: 24
+                      memory: 32Gi
+                    requests:
+                      cpu: 2
+                      memory: 4Gi
+                  volumeMounts:
+                    - name: git-cache
+                      mountPath: /var/cache/git
+              volumes:
+                - name: git-cache
+                  persistentVolumeClaim:
+                    claimName: git-cache
+    dest: /etc/circleci-runner/values.yaml
+    mode: '0600'
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+
+- name: Deploy CircleCI Container Agent
+  kubernetes.core.helm:
+    name: circleci-runner
+    chart_ref: container-agent/container-agent
+    release_namespace: circleci
+    create_namespace: true
+    values_files:
+      - /etc/circleci-runner/values.yaml
+    state: present
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: Wait for CircleCI runner deployment
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: circleci
+    name: circleci-runner-container-agent
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+  register: deployment
+  until: deployment.resources | length > 0 and (deployment.resources[0].status.readyReplicas | default(0)) > 0
+  retries: 30
+  delay: 10

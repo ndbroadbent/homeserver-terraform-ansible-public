@@ -1,0 +1,7 @@
+---
+- name: Configure CircleCI Runner LXC Container
+  import_playbook: configure_lxc_container_on_host.yml
+  vars:
+    container_id: '{{ circleci_runner_container_id }}'
+    container_type: 'CircleCI Runner'
+    container_ip_address: '{{ static_ips.circleci_runner }}'

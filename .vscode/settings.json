@@ -1,0 +1,23 @@
+{
+  "cSpell.enableFiletypes": [
+    "!c",
+    "!cpp",
+    "!go",
+    "!java",
+    "!php",
+    "!python",
+    "!python3",
+    "!r",
+    "!scala",
+    "!swift",
+    "!yaml",
+    "!yml"
+  ],
+  "cSpell.allowCompoundWords": true,
+  "cSpell.diagnosticLevel": "Hint",
+  "cSpell.showStatus": true,
+  "cSpell.enabled": true,
+  "shellcheck.customArgs": [
+    "-x"
+  ]
+}

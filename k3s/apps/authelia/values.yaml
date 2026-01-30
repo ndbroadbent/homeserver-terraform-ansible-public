@@ -1,0 +1,73 @@
+---
+# Authelia configuration
+configMap:
+  theme: dark
+  default_2fa_method: ''
+
+  log:
+    level: info
+
+  authentication_backend:
+    file:
+      enabled: true
+      path: /config/authelia-users-database/users_database.yml
+
+  access_control:
+    default_policy: deny
+    rules:
+      - domain: '*.home.example.com'
+        policy: one_factor
+
+  session:
+    name: authelia_session
+    domain: home.example.com
+    expiration: 12h
+    inactivity: 1h
+    cookies:
+      - domain: home.example.com
+        subdomain: auth
+
+  storage:
+    local:
+      enabled: true
+      path: /config/db.sqlite3
+
+  notifier:
+    disable_startup_check: true
+    filesystem:
+      enabled: true
+      filename: /config/notification.txt
+
+# Mount users database from external secret
+secret:
+  mountPath: /config
+  additionalSecrets:
+    authelia-users-database:
+      path: ''
+      items:
+        - key: users_database.yml
+          path: users_database.yml
+
+# Enable ingress for Authelia login page
+ingress:
+  enabled: true
+  className: traefik
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: 'true'
+  hosts:
+    - host: auth.home.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    enabled: false
+
+# Resource limits
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi

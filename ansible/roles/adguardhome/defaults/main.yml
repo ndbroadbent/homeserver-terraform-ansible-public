@@ -1,0 +1,15 @@
+---
+# AdGuard Home default configuration
+adguardhome_user: adguard
+adguardhome_install_dir: /opt/AdGuardHome
+adguardhome_config_file: '{{ adguardhome_install_dir }}/AdGuardHome.yaml'
+adguardhome_data_dir: '{{ adguardhome_install_dir }}/data'
+adguardhome_binary_url: 'https://github.com/AdguardTeam/AdGuardHome/releases/latest/download/AdGuardHome_linux_{{ ansible_architecture }}.tar.gz'
+
+# Service configuration
+adguardhome_bind_address: '0.0.0.0:80'
+adguardhome_dns_bind_host: '0.0.0.0'
+adguardhome_server_name: 'adguard.home.example.com'
+
+# DNS rewrites (can be overridden per host)
+adguardhome_dns_rewrites: []

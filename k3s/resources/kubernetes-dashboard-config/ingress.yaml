@@ -1,0 +1,30 @@
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kubernetes-dashboard
+  namespace: kubernetes-dashboard
+  annotations:
+    gethomepage.dev/enabled: 'true'
+    gethomepage.dev/name: K3s Dashboard
+    gethomepage.dev/description: Kubernetes Dashboard
+    gethomepage.dev/group: Admin
+    gethomepage.dev/icon: kubernetes-dashboard.png
+    gethomepage.dev/href: https://k3s.home.example.com
+    gethomepage.dev/pod-selector: app.kubernetes.io/part-of=kubernetes-dashboard
+    gethomepage.dev/siteMonitor: http://kubernetes-dashboard-web.kubernetes-dashboard.svc.cluster.local:8000
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`k3s.home.example.com`)
+      kind: Rule
+      middlewares:
+        - name: authelia-forward-auth
+          namespace: traefik
+        - name: dashboard-auth-header
+          namespace: traefik
+      services:
+        - name: kubernetes-dashboard-kong-proxy
+          port: 80
+  tls: {}

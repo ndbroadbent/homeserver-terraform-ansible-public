@@ -1,0 +1,126 @@
+---
+- name: Get dpkg architecture
+  ansible.builtin.command: dpkg --print-architecture
+  register: restic_dpkg_arch
+  changed_when: false
+
+- name: Set architecture variable
+  ansible.builtin.set_fact:
+    restic_arch: "{{ 'arm64' if restic_dpkg_arch.stdout == 'arm64' else ('arm' if restic_dpkg_arch.stdout == 'armhf' else 'amd64') }}"
+
+- name: Create restic directories
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - '{{ restic_install_dir }}'
+    - '{{ restic_config_dir }}'
+
+- name: Check if restic binary exists
+  ansible.builtin.stat:
+    path: '{{ restic_install_dir }}/restic'
+  register: restic_binary
+
+- name: Check installed restic version
+  ansible.builtin.command:
+    cmd: '{{ restic_install_dir }}/restic version'
+  register: restic_installed_version
+  changed_when: false
+  failed_when: false
+  when: restic_binary.stat.exists
+
+- name: Download and install restic
+  when: >
+    not restic_binary.stat.exists or
+    (restic_installed_version.stdout is defined and restic_version not in restic_installed_version.stdout)
+  block:
+    - name: Install bzip2
+      ansible.builtin.apt:
+        name: bzip2
+        state: present
+        update_cache: true
+
+    - name: Download restic
+      ansible.builtin.get_url:
+        url: '{{ restic_binary_url }}'
+        dest: '/tmp/restic.bz2'
+        mode: '0644'
+
+    - name: Extract restic
+      ansible.builtin.shell:
+        cmd: 'bzip2 -d -c /tmp/restic.bz2 > {{ restic_install_dir }}/restic'
+      args:
+        creates: '{{ restic_install_dir }}/restic'
+
+    - name: Set restic binary permissions
+      ansible.builtin.file:
+        path: '{{ restic_install_dir }}/restic'
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Clean up temporary files
+      ansible.builtin.file:
+        path: '/tmp/restic.bz2'
+        state: absent
+
+- name: Template restic environment file
+  ansible.builtin.template:
+    src: restic-env.j2
+    dest: '{{ restic_config_dir }}/env'
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Template restic exclude file
+  ansible.builtin.template:
+    src: restic-exclude.j2
+    dest: '{{ restic_config_dir }}/exclude'
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Template restic backup script
+  ansible.builtin.template:
+    src: restic-backup.sh.j2
+    dest: '{{ restic_install_dir }}/backup.sh'
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Template restic systemd service
+  ansible.builtin.template:
+    src: restic-backup.service.j2
+    dest: /etc/systemd/system/restic-backup.service
+    mode: '0644'
+  notify:
+    - Reload systemd
+
+- name: Template restic systemd timer
+  ansible.builtin.template:
+    src: restic-backup.timer.j2
+    dest: /etc/systemd/system/restic-backup.timer
+    mode: '0644'
+  notify:
+    - Reload systemd
+    - Restart restic-backup timer
+
+- name: Initialize restic repository if not exists
+  ansible.builtin.shell:
+    cmd: |
+      source {{ restic_config_dir }}/env
+      {{ restic_install_dir }}/restic snapshots || {{ restic_install_dir }}/restic init
+  args:
+    executable: /bin/bash
+  register: restic_init
+  changed_when: "'created restic repository' in restic_init.stdout"
+
+- name: Enable and start restic-backup timer
+  ansible.builtin.systemd:
+    name: restic-backup.timer
+    state: started
+    enabled: true
+    daemon_reload: true

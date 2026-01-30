@@ -1,0 +1,139 @@
+# Homepage Helm Chart values
+# Chart: https://github.com/jameswynn/helm-charts/tree/main/charts/homepage
+# Version: 2.1.0
+
+# Enable RBAC for Kubernetes integration (service discovery, metrics)
+enableRbac: true
+
+serviceAccount:
+  create: true
+  name: homepage
+
+# Extra cluster roles for Traefik IngressRoute discovery
+extraClusterRoles:
+  - apiGroups:
+      - traefik.io
+    resources:
+      - ingressroutes
+    verbs:
+      - get
+      - list
+      - watch
+
+# Disable built-in ingress - using Traefik IngressRoute instead
+ingress:
+  main:
+    enabled: false
+
+# Environment variables
+env:
+  - name: HOMEPAGE_ALLOWED_HOSTS
+    value: 'home.example.com,localhost,homepage.homepage.svc.cluster.local'
+  - name: TZ
+    value: 'America/Los_Angeles'
+
+# Resource limits
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Configuration
+config:
+  # Kubernetes integration - auto-discover services from IngressRoutes
+  kubernetes:
+    mode: cluster
+    # Enable Traefik IngressRoute discovery
+    traefik: true
+
+  # Settings with layout ordering preserved
+  settingsString: |
+    title: Home Dashboard
+    favicon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/homepage.png
+    headerStyle: boxed
+    theme: dark
+    color: slate
+    target: _blank
+    hideVersion: true
+    layout:
+      AI:
+        icon: mdi-robot
+        style: row
+        columns: 3
+      Infrastructure:
+        icon: mdi-server-network
+        style: row
+        columns: 4
+      Media:
+        icon: mdi-play-circle
+        style: row
+        columns: 4
+      Monitoring:
+        icon: mdi-chart-line
+        style: row
+        columns: 3
+      Smart Home:
+        icon: mdi-home-automation
+        style: row
+        columns: 3
+      Downloads:
+        icon: mdi-download
+        style: row
+        columns: 3
+      Admin:
+        icon: mdi-cog
+        style: row
+        columns: 4
+
+  # Dashboard widgets
+  widgets:
+    # Kubernetes cluster stats
+    - kubernetes:
+        cluster:
+          show: true
+          cpu: true
+          memory: true
+          showLabel: true
+          label: 'k3s'
+        nodes:
+          show: true
+          cpu: true
+          memory: true
+          showLabel: true
+
+    # Search widget
+    - search:
+        provider: google
+        target: _blank
+
+    # Date/time
+    - datetime:
+        text_size: xl
+        format:
+          dateStyle: long
+          timeStyle: short
+          hourCycle: h12
+
+  # Services auto-discovered from Traefik IngressRoutes via annotations
+  # Only define services here that can't be auto-discovered
+  services: []
+
+  # Bookmarks for external links
+  bookmarks:
+    - Development:
+        - GitHub:
+            - icon: github.png
+              href: https://github.com/youruser/homeserver-terraform-ansible
+    - Documentation:
+        - Kubernetes:
+            - icon: kubernetes.png
+              href: https://kubernetes.io/docs/
+        - ArgoCD:
+            - icon: argo-cd.png
+              href: https://argo-cd.readthedocs.io/
+
+  # Empty docker config (not using Docker integration)
+  docker: {}

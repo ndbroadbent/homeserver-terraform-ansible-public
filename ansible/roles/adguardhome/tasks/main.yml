@@ -1,0 +1,92 @@
+---
+- name: Generate bcrypt hash for AdGuard Home password
+  ansible.builtin.set_fact:
+    adguardhome_password_hash: "{{ adguardhome_password | password_hash('bcrypt') }}"
+  no_log: true
+
+- name: Create AdGuard Home user
+  ansible.builtin.user:
+    name: '{{ adguardhome_user }}'
+    system: true
+    shell: /bin/false
+    home: '{{ adguardhome_install_dir }}'
+    create_home: false
+  become: true
+
+- name: Create AdGuard Home directories
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: '{{ adguardhome_user }}'
+    group: '{{ adguardhome_user }}'
+    mode: '0755'
+  loop:
+    - '{{ adguardhome_install_dir }}'
+    - '{{ adguardhome_data_dir }}'
+  become: true
+
+- name: Check if AdGuard Home binary exists
+  ansible.builtin.stat:
+    path: '{{ adguardhome_install_dir }}/AdGuardHome'
+  register: adguardhome_binary
+
+- name: Download and install AdGuard Home
+  when: not adguardhome_binary.stat.exists
+  block:
+    - name: Download AdGuard Home
+      ansible.builtin.get_url:
+        url: '{{ adguardhome_binary_url }}'
+        dest: '/tmp/adguard.tar.gz'
+        mode: '0644'
+
+    - name: Extract AdGuard Home
+      ansible.builtin.unarchive:
+        src: '/tmp/adguard.tar.gz'
+        dest: '/tmp'
+        remote_src: true
+
+    - name: Install AdGuard Home binary
+      ansible.builtin.copy:
+        src: '/tmp/AdGuardHome/AdGuardHome'
+        dest: '{{ adguardhome_install_dir }}/AdGuardHome'
+        owner: '{{ adguardhome_user }}'
+        group: '{{ adguardhome_user }}'
+        mode: '0755'
+        remote_src: true
+      become: true
+
+    - name: Clean up download files
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: absent
+      loop:
+        - '/tmp/adguard.tar.gz'
+        - '/tmp/AdGuardHome'
+
+- name: Generate AdGuard Home configuration
+  ansible.builtin.template:
+    src: AdGuardHome.yaml.j2
+    dest: '{{ adguardhome_config_file }}'
+    owner: '{{ adguardhome_user }}'
+    group: '{{ adguardhome_user }}'
+    mode: '0600'
+  become: true
+  notify: restart adguard-home
+
+- name: Create AdGuard Home systemd service
+  ansible.builtin.template:
+    src: adguard-home.service.j2
+    dest: /etc/systemd/system/adguard-home.service
+    mode: '0644'
+  become: true
+  notify:
+    - reload systemd
+    - restart adguard-home
+
+- name: Enable and start AdGuard Home service
+  ansible.builtin.systemd:
+    name: adguard-home
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true

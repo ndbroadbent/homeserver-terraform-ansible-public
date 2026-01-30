@@ -1,0 +1,116 @@
+---
+# CronJob to backup Home Assistant config (.storage/ folder) to Backblaze B2
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ha-config-backup
+  namespace: home-assistant
+spec:
+  schedule: '0 4 * * *' # Daily at 4 AM
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      template:
+        spec:
+          restartPolicy: OnFailure
+          volumes:
+            - name: ha-config
+              persistentVolumeClaim:
+                claimName: home-assistant-home-assistant-0
+          containers:
+            - name: backup
+              image: restic/restic:0.17.3
+              env:
+                - name: RESTIC_REPOSITORY
+                  value: 'b2:$(B2_BUCKET):home-assistant'
+                - name: RESTIC_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: restic-credentials
+                      key: restic-password
+                - name: B2_ACCOUNT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: restic-credentials
+                      key: b2-account-id
+                - name: B2_ACCOUNT_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: restic-credentials
+                      key: b2-account-key
+                - name: B2_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: restic-credentials
+                      key: bucket
+              volumeMounts:
+                - name: ha-config
+                  mountPath: /config
+                  readOnly: true
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  export RESTIC_REPOSITORY="b2:${B2_BUCKET}:home-assistant"
+
+                  echo "Initializing restic repository (if needed)..."
+                  restic init 2>/dev/null || true
+
+                  echo "Backing up Home Assistant config to B2..."
+                  restic backup /config/.storage /config/configuration.yaml /config/automations.yaml /config/scripts.yaml /config/scenes.yaml \
+                    --exclude='*.db' \
+                    --exclude='*.db-shm' \
+                    --exclude='*.db-wal' \
+                    --exclude='*.log' \
+                    --exclude='__pycache__' \
+                    --exclude='*.pyc' \
+                    --tag home-assistant \
+                    --tag config
+
+                  echo "Pruning old backups..."
+                  restic forget --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --prune
+
+                  echo "Backup complete!"
+                  restic snapshots --latest 3
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: restic-credentials
+  namespace: home-assistant
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: onepassword-connect
+    kind: ClusterSecretStore
+  target:
+    name: restic-credentials
+    creationPolicy: Owner
+  data:
+    - secretKey: restic-password
+      remoteRef:
+        key: backblaze-restic-credentials
+        property: restic_password
+    - secretKey: b2-account-id
+      remoteRef:
+        key: backblaze-restic-credentials
+        property: username
+    - secretKey: b2-account-key
+      remoteRef:
+        key: backblaze-restic-credentials
+        property: password
+    - secretKey: bucket
+      remoteRef:
+        key: backblaze-restic-credentials
+        property: bucket

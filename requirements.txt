@@ -1,0 +1,5 @@
+mitogen==0.3.24
+ansible
+ansible-lint>=25.6.1
+passlib
+bcrypt==4.0.1

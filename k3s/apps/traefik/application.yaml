@@ -1,0 +1,7 @@
+---
+name: traefik
+repoURL: https://traefik.github.io/charts
+chart: traefik
+version: 36.1.0
+namespace: traefik
+values: values.yaml

@@ -1,0 +1,42 @@
+external_converters: []
+devices:
+  - devices.yaml
+groups:
+  - groups.yaml
+homeassistant:
+  legacy_entity_attributes: {{ zigbee2mqtt_homeassistant_legacy | lower }}
+  legacy_triggers: {{ zigbee2mqtt_homeassistant_legacy | lower }}
+permit_join: {{ zigbee2mqtt_permit_join | lower }}
+mqtt:
+  base_topic: zigbee2mqtt
+  server: {{ zigbee2mqtt_mqtt_server }}
+  user: {{ zigbee2mqtt_mqtt_user }}
+  password: {{ zigbee2mqtt_mqtt_password }}
+serial:
+  port: {{ zigbee2mqtt_serial_port }}
+advanced:
+  log_level: {{ zigbee2mqtt_log_level }}
+  pan_id: {{ zigbee2mqtt_pan_id }}
+  channel: {{ zigbee2mqtt_channel }}
+  network_key: {{ zigbee2mqtt_network_key.split(',') | map('int') | list }}
+  availability_blocklist: []
+  availability_passlist: []
+  homeassistant_legacy_entity_attributes: {{ zigbee2mqtt_homeassistant_legacy | lower }}
+  legacy_api: false
+  legacy_availability_payload: false
+device_options:
+  legacy: false
+blocklist: []
+passlist: []
+queue: {}
+frontend:
+  port: {{ zigbee2mqtt_frontend_port }}
+  url: {{ zigbee2mqtt_frontend_url }}
+  # auth is now handled by authelia middleware instead of auth_token
+experimental: {}
+availability:
+  enabled: true
+  active:
+    timeout: 30
+  passive:
+    timeout: 3000

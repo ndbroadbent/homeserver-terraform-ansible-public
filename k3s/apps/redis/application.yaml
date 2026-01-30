@@ -1,0 +1,7 @@
+---
+name: redis
+namespace: redis
+repoURL: https://charts.bitnami.com/bitnami
+chart: redis
+version: 24.1.2
+values: values.yaml

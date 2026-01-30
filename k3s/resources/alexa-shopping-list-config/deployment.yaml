@@ -1,0 +1,38 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alexa-shopping-list
+  namespace: alexa-shopping-list-config
+  labels:
+    app: alexa-shopping-list
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alexa-shopping-list
+  template:
+    metadata:
+      labels:
+        app: alexa-shopping-list
+    spec:
+      containers:
+        - name: server
+          image: madmachinations/ha-alexa-shopping-list-sync:latest
+          ports:
+            - containerPort: 4000
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: alexa-shopping-list-config

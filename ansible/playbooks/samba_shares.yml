@@ -1,0 +1,190 @@
+---
+- name: Configure Samba Network Shares
+  hosts: homeserver
+  become: true
+  vars:
+    timemachine_user: timemachine
+    timemachine_share_path: /mnt/tank/backups/timemachine
+    timemachine_quota: 2500G # Set quota for Time Machine backups (2.5TB)
+    media_user: youruser
+    media_share_path: /mnt/tank/media
+    projects_share_path: /mnt/tank/projects
+    data_processor_share_path: /mnt/tank/data-processor
+
+  tasks:
+    - name: Install Samba and required packages
+      ansible.builtin.apt:
+        name:
+          - samba
+          - samba-common-bin
+          - avahi-daemon
+        state: present
+        update_cache: true
+
+    - name: Create Time Machine user
+      ansible.builtin.user:
+        name: '{{ timemachine_user }}'
+        comment: Time Machine Backup User
+        shell: /usr/sbin/nologin
+        create_home: false
+        system: true
+
+    - name: Set Samba password for Time Machine user
+      ansible.builtin.shell: |
+        set -o pipefail
+        (echo "{{ timemachine_password }}"; echo "{{ timemachine_password }}") | smbpasswd -s -a {{ timemachine_user }}
+      no_log: true
+      changed_when: true
+
+    - name: Set Samba password for media user
+      ansible.builtin.shell: |
+        set -o pipefail
+        (echo "{{ youruser_password }}"; echo "{{ youruser_password }}") | smbpasswd -s -a {{ media_user }}
+      no_log: true
+      changed_when: true
+
+    - name: Ensure Time Machine share directory exists
+      ansible.builtin.file:
+        path: '{{ timemachine_share_path }}'
+        state: directory
+        owner: '{{ timemachine_user }}'
+        group: '{{ timemachine_user }}'
+        mode: '0700'
+
+    - name: Ensure media share directory exists
+      ansible.builtin.file:
+        path: '{{ media_share_path }}'
+        state: directory
+        mode: '0755'
+
+    - name: Ensure projects share directory exists
+      ansible.builtin.file:
+        path: '{{ projects_share_path }}'
+        state: directory
+        mode: '0755'
+
+    - name: Ensure data-processor share directory exists
+      ansible.builtin.file:
+        path: '{{ data_processor_share_path }}'
+        state: directory
+        owner: '{{ media_user }}'
+        group: '{{ media_user }}'
+        mode: '0777'
+
+    - name: Configure Samba shares
+      ansible.builtin.copy:
+        dest: /etc/samba/smb.conf
+        content: |
+          [global]
+          workgroup = WORKGROUP
+          server string = Homeserver
+          security = user
+          map to guest = Never
+          dns proxy = no
+          log file = /var/log/samba/log.%m
+          max log size = 1000
+
+          # macOS support
+          vfs objects = catia fruit streams_xattr
+          fruit:aapl = yes
+          fruit:metadata = stream
+          fruit:model = MacSamba
+          fruit:veto_appledouble = no
+          fruit:nfs_aces = no
+          fruit:wipe_intentionally_left_blank_rfork = yes
+          fruit:delete_empty_adfiles = yes
+          fruit:zero_file_id = yes
+          fruit:posix_rename = yes
+
+          [TimeMachine]
+          comment = Time Machine Backup
+          path = {{ timemachine_share_path }}
+          valid users = {{ timemachine_user }}
+          read only = no
+          create mask = 0600
+          directory mask = 0700
+          fruit:time machine = yes
+          fruit:time machine max size = {{ timemachine_quota }}
+
+          [Media]
+          comment = Movies, TV Shows, and Recordings
+          path = {{ media_share_path }}
+          valid users = {{ media_user }}
+          read only = no
+          create mask = 0644
+          directory mask = 0755
+          browseable = yes
+
+          [Projects]
+          comment = Project Data and Caches
+          path = {{ projects_share_path }}
+          valid users = {{ media_user }}
+          read only = no
+          create mask = 0644
+          directory mask = 0755
+          browseable = yes
+
+          [DataProcessor]
+          comment = Wikidata Processing Workspace
+          path = {{ data_processor_share_path }}
+          valid users = {{ media_user }}
+          read only = no
+          create mask = 0644
+          directory mask = 0755
+          browseable = yes
+        mode: '0644'
+        owner: root
+        group: root
+      notify: Restart Samba
+
+    - name: Configure Avahi service for Time Machine advertisement
+      ansible.builtin.copy:
+        dest: /etc/avahi/services/timemachine.service
+        content: |
+          <?xml version="1.0" standalone='no'?>
+          <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+          <service-group>
+            <name replace-wildcards="yes">%h</name>
+            <service>
+              <type>_smb._tcp</type>
+              <port>445</port>
+            </service>
+            <service>
+              <type>_device-info._tcp</type>
+              <port>9</port>
+              <txt-record>model=TimeCapsule8,119</txt-record>
+            </service>
+            <service>
+              <type>_adisk._tcp</type>
+              <port>9</port>
+              <txt-record>dk0=adVN=TimeMachine,adVF=0x82</txt-record>
+              <txt-record>sys=waMA=0,adVF=0x100</txt-record>
+            </service>
+          </service-group>
+        mode: '0644'
+        owner: root
+        group: root
+      notify: Restart Avahi
+
+    - name: Enable and start Samba service
+      ansible.builtin.systemd:
+        name: smbd
+        enabled: true
+        state: started
+
+    - name: Enable and start Avahi daemon
+      ansible.builtin.systemd:
+        name: avahi-daemon
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart Samba
+      ansible.builtin.systemd:
+        name: smbd
+        state: restarted
+
+    - name: Restart Avahi
+      ansible.builtin.systemd:
+        name: avahi-daemon
+        state: restarted

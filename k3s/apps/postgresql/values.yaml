@@ -1,0 +1,69 @@
+# PostgreSQL - Shared database server for all apps
+# Chart: https://github.com/bitnami/charts/tree/main/bitnami/postgresql
+# Docs: https://www.postgresql.org/docs/
+
+# Use existing secret for credentials (created by External Secrets)
+auth:
+  existingSecret: postgresql-credentials
+  secretKeys:
+    adminPasswordKey: postgres-password
+
+# PostgreSQL configuration
+primary:
+  # Persistence
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: local-path
+
+  # Resources
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  # PostgreSQL configuration
+  configuration: |
+    listen_addresses = '*'
+    max_connections = 100
+    shared_buffers = 256MB
+    effective_cache_size = 768MB
+    maintenance_work_mem = 64MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 8MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    work_mem = 2MB
+    min_wal_size = 1GB
+    max_wal_size = 4GB
+
+  # Init scripts to create databases for apps
+  initdb:
+    scripts:
+      init-databases.sql: |
+        CREATE DATABASE home_assistant;
+        CREATE DATABASE frigate;
+        CREATE DATABASE twenty;
+
+  # Pod annotations for Reloader
+  podAnnotations:
+    reloader.stakater.com/auto: 'true'
+
+# Disable read replicas (single node setup)
+readReplicas:
+  replicaCount: 0
+
+# Metrics for Prometheus
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+
+# Backup configuration via volumeSnapshots or external backup job
+backup:
+  enabled: false

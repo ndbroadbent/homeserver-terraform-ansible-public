@@ -1,0 +1,47 @@
+#!/bin/bash
+# Restic backup script for {{ inventory_hostname }}
+set -euo pipefail
+
+# Load environment
+source {{ restic_config_dir }}/env
+
+RESTIC="{{ restic_install_dir }}/restic"
+EXCLUDE_FILE="{{ restic_config_dir }}/exclude"
+
+echo "[$(date -Iseconds)] Starting backup for {{ inventory_hostname }}"
+
+# Run pre-backup commands if defined
+{% if restic_pre_backup_commands is defined %}
+{% for cmd in restic_pre_backup_commands %}
+echo "[$(date -Iseconds)] Running pre-backup: {{ cmd }}"
+{{ cmd }}
+{% endfor %}
+{% endif %}
+
+# Perform backup
+$RESTIC backup \
+    --exclude-file="$EXCLUDE_FILE" \
+    --tag="{{ restic_backup_name }}" \
+{% for path in restic_backup_paths %}
+    "{{ path }}" \
+{% endfor %}
+    --verbose
+
+echo "[$(date -Iseconds)] Backup complete, running forget/prune"
+
+# Apply retention policy
+$RESTIC forget \
+    --keep-daily {{ restic_keep_daily }} \
+    --keep-weekly {{ restic_keep_weekly }} \
+    --keep-monthly {{ restic_keep_monthly }} \
+    --prune
+
+# Run post-backup commands if defined
+{% if restic_post_backup_commands is defined %}
+{% for cmd in restic_post_backup_commands %}
+echo "[$(date -Iseconds)] Running post-backup: {{ cmd }}"
+{{ cmd }}
+{% endfor %}
+{% endif %}
+
+echo "[$(date -Iseconds)] All done!"

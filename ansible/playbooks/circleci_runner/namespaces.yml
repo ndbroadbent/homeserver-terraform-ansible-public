@@ -1,0 +1,45 @@
+---
+- name: Create CircleCI namespace
+  kubernetes.core.k8s:
+    name: circleci
+    api_version: v1
+    kind: Namespace
+    state: present
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: Create Redis namespace
+  kubernetes.core.k8s:
+    name: redis
+    api_version: v1
+    kind: Namespace
+    state: present
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: Create MinIO namespace
+  kubernetes.core.k8s:
+    name: minio
+    api_version: v1
+    kind: Namespace
+    state: present
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: Create Docker Registry namespace
+  kubernetes.core.k8s:
+    name: docker-registry
+    api_version: v1
+    kind: Namespace
+    state: present
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: Create Git Cache namespace
+  kubernetes.core.k8s:
+    name: git-cache
+    api_version: v1
+    kind: Namespace
+    state: present
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml

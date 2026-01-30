@@ -1,0 +1,31 @@
+---
+# Zigbee2MQTT default variables
+zigbee2mqtt_version: '1.37.1'
+
+# Backup configuration (rsync to homeserver)
+zigbee2mqtt_backup_enabled: true
+zigbee2mqtt_backup_destination: 'root@10.11.12.10:/mnt/tank/backups/services-pi/zigbee2mqtt/'
+zigbee2mqtt_backup_schedule: '0 */2 * * *' # Every 2 hours
+zigbee2mqtt_user: '{{ ansible_user }}'
+zigbee2mqtt_install_dir: '/opt/zigbee2mqtt'
+zigbee2mqtt_data_dir: '{{ zigbee2mqtt_install_dir }}/data'
+
+# MQTT Configuration - uses k3s cluster IP from inventory
+zigbee2mqtt_mqtt_server: 'mqtt://{{ hostvars["k3s-cluster"]["ansible_host"] }}:31883'
+zigbee2mqtt_mqtt_user: 'zigbee2mqtt'
+
+# Serial Configuration
+zigbee2mqtt_serial_port: '/dev/ttyUSB0'
+
+# Network Configuration
+zigbee2mqtt_pan_id: 6754
+zigbee2mqtt_channel: 25
+
+# Frontend Configuration
+zigbee2mqtt_frontend_port: 8080
+zigbee2mqtt_frontend_url: 'https://z2m.example.com'
+
+# Advanced Configuration
+zigbee2mqtt_log_level: 'info'
+zigbee2mqtt_permit_join: false
+zigbee2mqtt_homeassistant_legacy: false

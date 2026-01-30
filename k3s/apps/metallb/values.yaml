@@ -1,0 +1,10 @@
+# Disable FRR mode for LXC compatibility
+# FRR has issues with veth interfaces in LXC containers
+# Use native layer-2 mode instead
+frrk8s:
+  enabled: false
+
+# Native speaker configuration
+speaker:
+  frr:
+    enabled: false

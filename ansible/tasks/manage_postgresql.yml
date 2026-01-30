@@ -1,0 +1,90 @@
+---
+# Manage PostgreSQL password and databases
+# Requires: postgresql_password variable from secrets.yml
+
+- name: Check current PostgreSQL password in 1Password
+  ansible.builtin.shell: |
+    op item get postgresql --vault homeserver --fields postgres-password --reveal 2>/dev/null || echo ""
+  delegate_to: localhost
+  become: false
+  register: current_pg_password
+  changed_when: false
+  no_log: true
+
+- name: Update PostgreSQL password in 1Password if it's a placeholder
+  ansible.builtin.shell: |
+    op item edit postgresql --vault homeserver "postgres-password={{ postgresql_password }}"
+  delegate_to: localhost
+  become: false
+  when: >
+    current_pg_password.stdout == "" or
+    current_pg_password.stdout == "$(cat /tmp/pg_pass.txt)" or
+    current_pg_password.stdout != postgresql_password
+  changed_when: true
+  no_log: true
+
+- name: Force refresh PostgreSQL external secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: postgresql-credentials
+        namespace: postgresql
+        annotations:
+          force-sync: '{{ ansible_date_time.epoch }}'
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+  ignore_errors: true
+
+- name: Wait for PostgreSQL pod to be ready
+  ansible.builtin.shell: |
+    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=postgresql -n postgresql --timeout=300s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: pg_ready
+  retries: 30
+  delay: 10
+  until: pg_ready.rc == 0
+  changed_when: false
+
+- name: Get PostgreSQL pod name
+  ansible.builtin.shell: |
+    kubectl get pods -n postgresql -l app.kubernetes.io/name=postgresql -o jsonpath='{.items[0].metadata.name}'
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: pg_pod_name
+  changed_when: false
+
+- name: Update PostgreSQL password in database (if different from current)
+  ansible.builtin.shell: |
+    # Try with old placeholder first, then with new password
+    for pw in '$(cat /tmp/pg_pass.txt)' '{{ postgresql_password }}'; do
+      if kubectl exec -n postgresql {{ pg_pod_name.stdout }} -- \
+        env PGPASSWORD="$pw" psql -U postgres -c "SELECT 1" 2>/dev/null; then
+        # Connected successfully, now update password
+        kubectl exec -n postgresql {{ pg_pod_name.stdout }} -- \
+          env PGPASSWORD="$pw" psql -U postgres -c "ALTER USER postgres WITH PASSWORD '{{ postgresql_password }}';"
+        exit 0
+      fi
+    done
+    echo "Could not connect to PostgreSQL" >&2
+    exit 1
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: pg_password_update
+  changed_when: "'ALTER ROLE' in pg_password_update.stdout"
+  no_log: true
+
+- name: Create required databases
+  ansible.builtin.shell: |
+    kubectl exec -n postgresql {{ pg_pod_name.stdout }} -- \
+      env PGPASSWORD='{{ postgresql_password }}' psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = '{{ item }}'" | grep -q 1 || \
+    kubectl exec -n postgresql {{ pg_pod_name.stdout }} -- \
+      env PGPASSWORD='{{ postgresql_password }}' psql -U postgres -c "CREATE DATABASE {{ item }};"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  loop: "{{ postgresql_databases | default(['twenty']) }}"
+  register: db_create
+  changed_when: "'CREATE DATABASE' in db_create.stdout"
+  no_log: true

@@ -1,0 +1,61 @@
+---
+# ExternalSecret for Loki Basic Auth credentials
+# 1Password item: loki-push-credentials in vault "homeserver"
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: loki-basic-auth
+  namespace: loki
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: onepassword-connect
+    kind: ClusterSecretStore
+  target:
+    name: loki-basic-auth
+    creationPolicy: Owner
+    template:
+      type: Opaque
+      data:
+        users: '{{ htpasswd .username .password }}'
+  data:
+    - secretKey: username
+      remoteRef:
+        key: loki-push-credentials
+        property: username
+    - secretKey: password
+      remoteRef:
+        key: loki-push-credentials
+        property: password
+---
+# BasicAuth Middleware for Promtail push endpoint
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: loki-basic-auth
+  namespace: loki
+spec:
+  basicAuth:
+    secret: loki-basic-auth
+---
+# Loki Push API IngressRoute
+# Used by external Promtail instances to send logs
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: loki-push
+  namespace: loki
+  annotations:
+    gethomepage.dev/enabled: 'false'
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`loki.home.example.com`)
+      kind: Rule
+      middlewares:
+        - name: loki-basic-auth
+      services:
+        - name: loki-gateway
+          port: 80
+  tls: {}

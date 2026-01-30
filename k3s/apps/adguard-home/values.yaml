@@ -1,0 +1,112 @@
+---
+# AdGuard Home configuration using TrueCharts
+# Chart values: https://github.com/truecharts/public/blob/master/charts/stable/adguard-home/values.yaml
+# Common library: https://github.com/truecharts/public/blob/master/charts/library/common/values.yaml
+
+# Timezone configuration
+TZ: Pacific/Auckland
+
+# Service configuration
+service:
+  main:
+    ports:
+      main:
+        port: 80
+        targetPort: 80
+        protocol: http
+  dns-tcp:
+    enabled: true
+    type: LoadBalancer
+    loadBalancerIP: 10.11.12.14
+    externalTrafficPolicy: Local
+    annotations:
+      metallb.universe.tf/address-pool: homeserver-pool
+      metallb.universe.tf/allow-shared-ip: adguard-dns
+    ports:
+      dns-tcp:
+        enabled: true
+        port: 53
+        targetPort: 53
+        protocol: tcp
+  dns-udp:
+    enabled: true
+    type: LoadBalancer
+    loadBalancerIP: 10.11.12.14
+    externalTrafficPolicy: Local
+    annotations:
+      metallb.universe.tf/address-pool: homeserver-pool
+      metallb.universe.tf/allow-shared-ip: adguard-dns
+    ports:
+      dns-udp:
+        enabled: true
+        protocol: udp
+        port: 53
+        targetPort: 53
+
+# Persistence for AdGuard Home configuration and data
+persistence:
+  config:
+    enabled: false # disable the default PVC
+  data:
+    enabled: true
+    storageClass: openebs-zfs-rpool
+    size: 100Gi
+    accessModes:
+      - ReadWriteOnce
+  adguard-config:
+    enabled: true
+    type: configmap
+    objectName: config-template
+    subPath: AdGuardHome.yaml
+    mountPath: /config-template/AdGuardHome.yaml
+    readOnly: true
+    optional: true
+    targetSelector:
+      main:
+        main: {}
+        copy-config: {}
+  conf:
+    enabled: true
+    type: emptyDir
+    mountPath: /opt/adguardhome/conf
+    targetSelector:
+      main:
+        main: {}
+        copy-config: {}
+
+# Resource limits
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Init containers to copy config template
+workload:
+  main:
+    annotations:
+      reloader.stakater.com/auto: 'true'
+    podSpec:
+      initContainers:
+        copy-config:
+          enabled: true
+          type: init
+          imageSelector: image
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Copying AdGuard Home config template..."
+              cp /config-template/AdGuardHome.yaml /opt/adguardhome/conf/AdGuardHome.yaml
+              echo "Config copied successfully"
+
+# Security context
+securityContext:
+  container:
+    runAsNonRoot: false
+    runAsUser: 0
+    runAsGroup: 0
+  pod:
+    hostUsers: true

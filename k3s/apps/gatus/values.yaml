@@ -1,0 +1,243 @@
+# Gatus - Automated service health dashboard
+# Chart: https://github.com/TwiN/helm-charts/tree/main/charts/gatus
+# Docs: https://github.com/TwiN/gatus
+
+# Deployment strategy - Recreate required for RWO volumes
+deployment:
+  strategy: Recreate
+
+# Persistence for SQLite database
+persistence:
+  enabled: true
+  size: 1Gi
+  accessModes:
+    - ReadWriteOnce
+
+# Resources
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# ServiceMonitor for Prometheus integration
+serviceMonitor:
+  enabled: true
+  namespace: monitoring
+
+# Gatus configuration
+config:
+  # SQLite storage for history
+  storage:
+    type: sqlite
+    path: /data/data.db
+
+  # UI settings
+  ui:
+    title: Service Status
+    header: Homeserver Status
+
+  # Default settings applied to all endpoints
+  # Using YAML anchors for DRY configuration
+  endpoints:
+    # ============================================
+    # Infrastructure - Core network and hypervisor
+    # ============================================
+    - name: Proxmox
+      group: Infrastructure
+      url: https://10.11.12.10:8006
+      interval: 60s
+      client:
+        insecure: true
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 3000'
+
+    - name: UniFi Controller
+      group: Infrastructure
+      url: https://10.11.12.1:443
+      interval: 60s
+      client:
+        insecure: true
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 3000'
+
+    - name: K3s Cluster
+      group: Infrastructure
+      url: https://10.11.12.11:6443/livez
+      interval: 60s
+      client:
+        insecure: true
+      conditions:
+        - '[STATUS] == 401'
+        - '[RESPONSE_TIME] < 1000'
+
+    # ============================================
+    # DNS & Network Services
+    # ============================================
+    - name: AdGuard Home (K3s)
+      group: DNS
+      url: http://adguard-home.adguard-home.svc.cluster.local:80/login.html
+      interval: 60s
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 1000'
+
+    - name: AdGuard Home (Pi)
+      group: DNS
+      url: http://10.11.12.22:80/login.html
+      interval: 60s
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 1000'
+
+    - name: DNS Resolution (K3s)
+      group: DNS
+      url: 10.11.12.14
+      interval: 60s
+      dns:
+        query-name: google.com
+        query-type: A
+      conditions:
+        - '[DNS_RCODE] == NOERROR'
+        - '[RESPONSE_TIME] < 500'
+
+    - name: DNS Resolution (Pi)
+      group: DNS
+      url: 10.11.12.22
+      interval: 60s
+      dns:
+        query-name: google.com
+        query-type: A
+      conditions:
+        - '[DNS_RCODE] == NOERROR'
+        - '[RESPONSE_TIME] < 500'
+
+    # ============================================
+    # Smart Home
+    # ============================================
+    - name: Home Assistant
+      group: Smart Home
+      url: http://home-assistant.home-assistant.svc.cluster.local:8123
+      interval: 60s
+      conditions:
+        - '[STATUS] == any(200, 302)'
+        - '[RESPONSE_TIME] < 2000'
+
+    - name: Zigbee2MQTT
+      group: Smart Home
+      url: http://10.11.12.22:8080
+      interval: 60s
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 1000'
+
+    - name: MQTT Broker
+      group: Smart Home
+      url: tcp://mqtt-mosquitto.mqtt.svc.cluster.local:1883
+      interval: 60s
+      conditions:
+        - '[CONNECTED] == true'
+        - '[RESPONSE_TIME] < 1000'
+
+    - name: Frigate
+      group: Smart Home
+      url: http://frigate.frigate.svc.cluster.local:5000/api/version
+      interval: 60s
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 2000'
+
+    # ============================================
+    # K3s Platform Services
+    # ============================================
+    - name: ArgoCD
+      group: Platform
+      url: http://argocd-server.argocd.svc.cluster.local:80
+      interval: 60s
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 2000'
+
+    - name: Traefik
+      group: Platform
+      url: http://traefik.traefik.svc.cluster.local:8080/ping
+      interval: 60s
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 500'
+
+    - name: Authelia
+      group: Platform
+      url: http://authelia.authelia.svc.cluster.local:80/api/health
+      interval: 60s
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 1000'
+
+    - name: Homepage
+      group: Platform
+      url: http://homepage.homepage.svc.cluster.local:3000
+      interval: 60s
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 2000'
+
+    # ============================================
+    # Monitoring & Observability
+    # ============================================
+    - name: Grafana
+      group: Monitoring
+      url: http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local:80/api/health
+      interval: 60s
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 2000'
+
+    - name: Prometheus
+      group: Monitoring
+      url: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/-/healthy
+      interval: 60s
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 1000'
+
+    - name: Loki
+      group: Monitoring
+      url: http://loki.loki.svc.cluster.local:3100/ready
+      interval: 60s
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 1000'
+
+    - name: Minio
+      group: Monitoring
+      url: http://minio.minio.svc.cluster.local:9000/minio/health/live
+      interval: 60s
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 1000'
+
+    # ============================================
+    # External Connectivity
+    # ============================================
+    - name: Internet (Google)
+      group: External
+      url: https://www.google.com
+      interval: 120s
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 2000'
+
+    - name: Internet (Cloudflare)
+      group: External
+      url: https://1.1.1.1
+      interval: 120s
+      client:
+        insecure: true
+      conditions:
+        - '[STATUS] == 200'
+        - '[RESPONSE_TIME] < 1000'

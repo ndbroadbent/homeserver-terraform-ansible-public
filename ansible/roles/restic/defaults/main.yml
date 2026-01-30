@@ -1,0 +1,35 @@
+---
+# Restic version to install
+restic_version: '0.17.3'
+
+# Installation paths
+restic_install_dir: '/opt/restic'
+restic_config_dir: '/etc/restic'
+
+# B2 repository URL (set by restic_b2_bucket variable)
+# restic_repository: 'b2:{{ restic_b2_bucket }}:{{ restic_backup_name }}'
+
+# Backup schedule (systemd timer format)
+restic_backup_schedule: '*-*-* 03:00:00'
+
+# Retention policy
+restic_keep_daily: 7
+restic_keep_weekly: 4
+restic_keep_monthly: 12
+
+# Backup paths (override per host)
+restic_backup_paths: []
+
+# Backup name (used as subfolder in bucket)
+restic_backup_name: '{{ inventory_hostname }}'
+
+# Exclude patterns
+restic_exclude_patterns:
+  - '*.tmp'
+  - '*.log'
+  - '*.cache'
+  - '__pycache__'
+  - 'node_modules'
+
+# Binary download URL
+restic_binary_url: 'https://github.com/restic/restic/releases/download/v{{ restic_version }}/restic_{{ restic_version }}_linux_{{ restic_arch }}.bz2'

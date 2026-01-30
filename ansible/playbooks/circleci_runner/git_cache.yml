@@ -1,0 +1,90 @@
+---
+# Simple git cache using a shared PVC mounted into CircleCI runners
+
+- name: Create git cache PVC
+  kubernetes.core.k8s:
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: git-cache
+        namespace: circleci
+      spec:
+        accessModes:
+          - ReadWriteMany # Allow multiple pods to mount
+        resources:
+          requests:
+            storage: 100Gi
+        storageClassName: openebs-zfs-circleci
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+
+- name: Create git cache helper ConfigMap
+  kubernetes.core.k8s:
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: git-cache-scripts
+        namespace: circleci
+      data:
+        git-clone-cached.sh: |
+          #!/bin/bash
+          # Clone or update a git repository using local cache
+
+          REPO_URL="${1}"
+          TARGET_DIR="${2:-$(basename "$REPO_URL" .git)}"
+          CACHE_BASE="/var/cache/git"
+
+          # Extract repo name from URL
+          REPO_NAME=$(echo "$REPO_URL" | sed -E 's|.*/([^/]+)(\.git)?$|\1|' | sed 's|\.git$||')
+          CACHE_DIR="$CACHE_BASE/$REPO_NAME.git"
+
+          # Ensure cache directory exists
+          mkdir -p "$CACHE_BASE"
+
+          # If cache exists, update it
+          if [ -d "$CACHE_DIR" ]; then
+            echo "Updating cached repository: $CACHE_DIR"
+            cd "$CACHE_DIR"
+            git fetch --all --prune || echo "Failed to update cache, continuing..."
+          else
+            echo "Creating cached repository: $CACHE_DIR"
+            git clone --mirror "$REPO_URL" "$CACHE_DIR" || {
+              echo "Failed to create cache, cloning directly..."
+              git clone "$REPO_URL" "$TARGET_DIR"
+              exit 0
+            }
+          fi
+
+          # Clone from cache to target directory
+          echo "Cloning from cache to: $TARGET_DIR"
+          git clone "$CACHE_DIR" "$TARGET_DIR"
+
+          # Update remote to point to real origin
+          cd "$TARGET_DIR"
+          git remote set-url origin "$REPO_URL"
+
+          # Fetch latest changes from origin
+          git fetch origin || echo "Failed to fetch from origin, using cache"
+
+        git-reference-clone.sh: |
+          #!/bin/bash
+          # Clone using reference repository to save bandwidth
+
+          REPO_URL="${1}"
+          TARGET_DIR="${2:-$(basename "$REPO_URL" .git)}"
+          CACHE_BASE="/var/cache/git"
+
+          # Extract repo name from URL
+          REPO_NAME=$(echo "$REPO_URL" | sed -E 's|.*/([^/]+)(\.git)?$|\1|' | sed 's|\.git$||')
+          CACHE_DIR="$CACHE_BASE/$REPO_NAME.git"
+
+          # Clone using reference if cache exists
+          if [ -d "$CACHE_DIR" ]; then
+            echo "Cloning with reference repository: $CACHE_DIR"
+            git clone --reference "$CACHE_DIR" "$REPO_URL" "$TARGET_DIR"
+          else
+            echo "No cache found, cloning normally..."
+            git clone "$REPO_URL" "$TARGET_DIR"
+          fi
+    kubeconfig: /etc/rancher/k3s/k3s.yaml

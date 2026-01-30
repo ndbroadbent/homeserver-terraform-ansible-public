@@ -1,0 +1,82 @@
+---
+- name: Create Docker Registry values.yaml
+  ansible.builtin.copy:
+    content: |
+      image:
+        repository: registry
+        tag: 2.8.3
+      persistence:
+        enabled: true
+        size: 100Gi
+        storageClass: "openebs-zfs-circleci"
+      service:
+        type: ClusterIP
+        port: 5000
+      storage: filesystem
+      # Configure garbage collection
+      garbageCollect:
+        enabled: true
+        schedule: "0 2 * * *"
+      # No authentication for internal CI use
+      secrets:
+        htpasswd: ""
+      # Resource limits
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "100m"
+        limits:
+          memory: "512Mi"
+          cpu: "500m"
+      # Enable delete operations in config
+      configData:
+        version: 0.1
+        log:
+          fields:
+            service: registry
+        storage:
+          cache:
+            blobdescriptor: inmemory
+          filesystem:
+            rootdirectory: /var/lib/registry
+          delete:
+            enabled: true
+        http:
+          addr: :5000
+          headers:
+            X-Content-Type-Options: [nosniff]
+        health:
+          storagedriver:
+            enabled: true
+            interval: 10s
+            threshold: 3
+        proxy:
+          remoteurl: https://registry-1.docker.io
+          username: "{{ docker_hub_username | default('') }}"
+          password: "{{ docker_hub_password | default('') }}"
+    dest: /etc/circleci-runner/docker-registry-values.yaml
+    mode: '0644'
+
+- name: Deploy Docker Registry
+  kubernetes.core.helm:
+    name: docker-registry
+    chart_ref: twuni/docker-registry
+    release_namespace: docker-registry
+    create_namespace: true
+    values_files:
+      - /etc/circleci-runner/docker-registry-values.yaml
+    state: present
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: Wait for Docker Registry deployment
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: docker-registry
+    name: docker-registry
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+  register: registry_deployment
+  until: registry_deployment.resources | length > 0 and (registry_deployment.resources[0].status.readyReplicas | default(0)) > 0
+  retries: 30
+  delay: 10

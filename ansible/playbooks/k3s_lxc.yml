@@ -1,0 +1,362 @@
+---
+- name: Install and Configure K3s in LXC Container
+  hosts: k3s_cluster
+  become: true
+  vars:
+    k3s_version: 'v1.28.5+k3s1'
+    k3s_datastore_endpoint: ''
+    k3s_token: '{{ k3s_cluster_token | default(ansible_machine_id) }}'
+
+  tasks:
+    - name: Manage password salts
+      ansible.builtin.include_tasks: ../tasks/manage_password_salts.yml
+      vars:
+        required_salt_names:
+          - argocd_salt
+          - adguard_salt
+
+    - name: Install K3s base components
+      ansible.builtin.include_tasks: ../tasks/install_k3s_base.yml
+      vars:
+        zfs_storage_classes:
+          - name: openebs-zfs-rpool
+            poolname: rpool/k3s/storage
+            annotations:
+              storageclass.kubernetes.io/is-default-class: 'true'
+          - name: openebs-zfs-tank
+            poolname: tank/k3s/storage
+
+    - name: Install NVIDIA Container Toolkit
+      ansible.builtin.include_tasks: ../tasks/install_nvidia_container_toolkit.yml
+
+    - name: Install ArgoCD CLI
+      ansible.builtin.get_url:
+        url: https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+        dest: /usr/local/bin/argocd
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Set KUBECONFIG environment variable
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      block:
+        - name: Check if Argo CD Helm repository exists
+          ansible.builtin.shell: |
+            set -o pipefail
+            helm repo list | grep -q '^argo\s'
+          register: argo_repo_exists
+          failed_when: false
+          changed_when: false
+
+        - name: Add Argo CD Helm repository
+          ansible.builtin.command: helm repo add argo https://argoproj.github.io/argo-helm
+          when: argo_repo_exists.rc != 0
+          changed_when: false
+
+        - name: Update Helm repositories
+          ansible.builtin.command: helm repo update
+          changed_when: false
+        - name: Create argocd namespace
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: argocd
+            kubeconfig: /etc/rancher/k3s/k3s.yaml
+        - name: Check if Argo CD is already installed
+          ansible.builtin.command: helm list -n argocd --filter argocd
+          environment:
+            KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+          register: argocd_check
+          failed_when: false
+          changed_when: false
+
+        - name: Install Argo CD
+          ansible.builtin.shell: |
+            helm upgrade --install argocd argo/argo-cd \
+              --namespace argocd \
+              --set server.service.type=NodePort \
+              --set server.service.nodePortHttp=30080 \
+              --set server.service.nodePortHttps=30443 \
+              --set configs.params."server\.insecure"=true \
+              --set configs.cm."accounts\.admin"="apiKey,login"
+          when: '"argocd" not in argocd_check.stdout'
+          changed_when: true
+
+        - name: Wait for Argo CD to be ready
+          ansible.builtin.command: kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd
+          environment:
+            KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+          changed_when: false
+
+        - name: Set ArgoCD admin password
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: argocd-secret
+                namespace: argocd
+              data:
+                admin.password: "{{ (argocd_admin_password | password_hash('bcrypt', salt=password_salts.argocd_salt)) | b64encode }}"
+            kubeconfig: /etc/rancher/k3s/k3s.yaml
+          no_log: true
+
+        - name: Configure ArgoCD for Helm and load restrictions
+          kubernetes.core.k8s:
+            state: present
+            definition:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: argocd-cm
+                namespace: argocd
+              data:
+                kustomize.buildOptions: '--enable-helm --load-restrictor=LoadRestrictionsNone'
+            kubeconfig: /etc/rancher/k3s/k3s.yaml
+
+    - name: Create external-secrets-system namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: external-secrets-system
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+
+    - name: Create onepassword-connect namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: onepassword-connect
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+
+    - name: Create SSH key secret for private repo access
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: homeserver-repo
+            namespace: argocd
+            labels:
+              argocd.argoproj.io/secret-type: repository
+          type: Opaque
+          stringData:
+            type: git
+            url: git@github.com:youruser/homeserver-terraform-ansible.git
+            sshPrivateKey: '{{ argocd_ssh_private_key }}'
+            insecure: 'false'
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      no_log: true
+
+    - name: Create 1Password Service Account token secret for external-secrets
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: onepassword-token
+            namespace: external-secrets-system
+          type: Opaque
+          stringData:
+            token: '{{ onepassword_service_account_token }}'
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      no_log: true
+
+    - name: Create 1Password Connect Server credentials secret
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: onepassword-connect-credentials
+            namespace: onepassword-connect
+          type: Opaque
+          stringData:
+            1password-credentials.json: '{{ onepassword_connect_credentials | b64encode }}'
+            token: '{{ onepassword_connect_access_token }}'
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      no_log: true
+
+    - name: Generate bcrypt hash for AdGuard Home password
+      ansible.builtin.set_fact:
+        adguardhome_password_hash: "{{ adguardhome_password | password_hash('bcrypt', salt=password_salts.adguard_salt) }}"
+      no_log: true
+
+    - name: Create adguard-home namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: adguard-home
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+
+    - name: Create AdGuard Home configuration ConfigMap
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: adguard-home-config-template
+            namespace: adguard-home
+          data:
+            AdGuardHome.yaml: "{{ lookup('template', '../roles/adguardhome/templates/AdGuardHome.yaml.j2') }}"
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      vars:
+        adguardhome_install_dir: /opt/adguardhome
+        adguardhome_bind_address: '0.0.0.0:80'
+        adguardhome_dns_bind_host: '0.0.0.0'
+        adguardhome_server_name: 'adguard.home.example.com'
+
+    - name: Create freeradius namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: freeradius
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+
+    - name: Create FreeRADIUS authorize ConfigMap
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: freeradius-authorize
+            namespace: freeradius
+          data:
+            authorize: "{{ lookup('template', '../roles/freeradius/templates/authorize.j2') }}"
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+
+    - name: Deploy root ArgoCD application (GitOps bootstrap)
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: root
+            namespace: argocd
+            labels:
+              app.kubernetes.io/instance: root
+            finalizers:
+              - resources-finalizer.argocd.argoproj.io
+          spec:
+            project: default
+            source:
+              repoURL: git@github.com:youruser/homeserver-terraform-ansible.git
+              targetRevision: HEAD
+              path: k3s
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: argocd
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+
+    - name: Wait for ArgoCD to be ready
+      ansible.builtin.uri:
+        url: 'http://{{ ansible_default_ipv4.address }}:30080/healthz'
+        method: GET
+        status_code: 200
+      register: argocd_ready
+      until: argocd_ready.status == 200
+      retries: 30
+      delay: 10
+
+    - name: Login to Argo CD CLI
+      ansible.builtin.shell: |
+        argocd login {{ ansible_default_ipv4.address }}:30080 \
+          --plaintext \
+          --username admin \
+          --password "{{ argocd_admin_password }}"
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      no_log: true
+      changed_when: false
+
+    - name: Generate non-expiring token for Argo CD CLI
+      ansible.builtin.shell: |
+        argocd account generate-token --account admin --expires-in 0s
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: argocd_token
+      no_log: true
+      changed_when: false
+
+    - name: Enable PermitUserEnvironment in SSH config
+      ansible.builtin.blockinfile:
+        path: /etc/ssh/sshd_config
+        marker: '# {mark} ANSIBLE SSH ENVIRONMENT'
+        block: |
+          PermitUserEnvironment yes
+        backup: true
+      notify: Restart sshd
+
+    - name: Create .ssh directory for root
+      ansible.builtin.file:
+        path: /root/.ssh
+        state: directory
+        mode: '0700'
+        owner: root
+        group: root
+
+    - name: Add openclaw SSH key to authorized_keys
+      ansible.posix.authorized_key:
+        user: root
+        state: present
+        key: '{{ openclaw_ssh_public_key }}'
+        comment: 'openclaw@homeserver'
+
+    - name: Add ArgoCD token to SSH authorized_keys with environment option
+      ansible.builtin.replace:
+        path: /root/.ssh/authorized_keys
+        regexp: '^(ssh-ed25519 .+)$'
+        replace: 'environment="ARGOCD_AUTH_TOKEN={{ argocd_token.stdout }}" \1'
+        backup: true
+      no_log: true
+
+    - name: Persist ARGOCD_AUTH_TOKEN in /root/.bashrc (for interactive sessions)
+      ansible.builtin.blockinfile:
+        path: /root/.bashrc
+        marker: '# {mark} ANSIBLE_ARGOCD_TOKEN'
+        block: |
+          export ARGOCD_AUTH_TOKEN={{ argocd_token.stdout }}
+      no_log: true
+      changed_when: false
+
+    - name: Manage PostgreSQL password and databases
+      ansible.builtin.include_tasks: ../tasks/manage_postgresql.yml
+      vars:
+        postgresql_databases:
+          - home_assistant
+          - frigate
+          - twenty
+
+  handlers:
+    - name: Restart sshd
+      ansible.builtin.service:
+        name: ssh
+        state: restarted

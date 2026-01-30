@@ -1,0 +1,7 @@
+---
+name: thanos-compactor
+namespace: monitoring
+repoURL: https://charts.bitnami.com/bitnami
+chart: thanos
+version: 17.3.1
+values: values.yaml

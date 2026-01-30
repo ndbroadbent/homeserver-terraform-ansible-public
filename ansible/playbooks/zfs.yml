@@ -1,0 +1,321 @@
+---
+- name: Manage ZFS Pools and Datasets
+  hosts: homeserver
+  become: true
+  vars:
+    # K3s specific datasets to create
+    k3s_datasets:
+      - name: rpool/k3s
+        properties:
+          compression: lz4
+          atime: false
+          recordsize: 128k
+        mountpoint: /mnt/rpool/k3s
+
+      - name: rpool/k3s/config
+        properties:
+          compression: lz4
+        mountpoint: /mnt/rpool/k3s/config
+
+      - name: rpool/k3s/storage
+        properties:
+          compression: lz4
+          recordsize: 1M
+        mountpoint: /mnt/rpool/k3s/storage
+
+      - name: rpool/k3s/snapshots
+        properties:
+          compression: lz4
+        mountpoint: /mnt/rpool/k3s/snapshots
+
+      - name: rpool/k3s/containerd
+        properties:
+          compression: lz4
+          recordsize: 128k # Good for container layers
+        mountpoint: /mnt/rpool/k3s/containerd
+
+    # CircleCI runner datasets
+    circleci_datasets:
+      - name: rpool/circleci-runner
+        properties:
+          compression: lz4
+          atime: false
+          recordsize: 128k
+        mountpoint: /mnt/rpool/circleci-runner
+
+      - name: rpool/circleci-runner/k3s-config
+        properties:
+          compression: lz4
+        mountpoint: /mnt/rpool/circleci-runner/k3s-config
+
+      - name: rpool/circleci-runner/containerd
+        properties:
+          compression: lz4
+          recordsize: 128k # Good for container layers
+        mountpoint: /mnt/rpool/circleci-runner/containerd
+
+      - name: rpool/circleci-runner/cache
+        properties:
+          compression: lz4
+          recordsize: 1M # Good for large build artifacts
+          atime: false
+        mountpoint: /mnt/rpool/circleci-runner/cache
+
+      - name: rpool/circleci-runner/redis-data
+        properties:
+          compression: lz4
+          recordsize: 8k # Good for Redis persistence
+          atime: false
+        mountpoint: /mnt/rpool/circleci-runner/redis-data
+
+      - name: rpool/circleci-runner/minio-data
+        properties:
+          compression: lz4
+          recordsize: 1M # Good for large object storage
+          atime: false
+        mountpoint: /mnt/rpool/circleci-runner/minio-data
+
+      - name: rpool/circleci-runner/storage
+        properties:
+          compression: lz4
+          recordsize: 128k # Same as main K3s cluster
+          atime: false
+        mountpoint: /mnt/rpool/circleci-runner/storage
+
+    # Tank datasets (ensure they exist and are properly configured)
+    tank_datasets:
+      - name: tank/media
+        properties:
+          compression: false # Media files are already compressed
+          atime: false
+          recordsize: 1M
+        mountpoint: /mnt/tank/media
+
+      - name: tank/backups
+        properties:
+          compression: false # Backups are already zst compressed
+          atime: false
+          recordsize: 1M
+        mountpoint: /mnt/tank/backups
+
+      - name: tank/backups/timemachine
+        properties:
+          compression: lz4 # Time Machine benefits from compression
+          atime: false
+          recordsize: 1M
+        mountpoint: /mnt/tank/backups/timemachine
+
+      - name: tank/vm-disks
+        properties:
+          compression: lz4
+          atime: false
+        mountpoint: /mnt/tank/vm-disks
+
+      - name: tank/k3s
+        properties:
+          compression: lz4
+          atime: false
+        mountpoint: /mnt/tank/k3s
+
+      - name: tank/k3s/storage
+        properties:
+          compression: lz4
+          recordsize: 1M
+        mountpoint: /mnt/tank/k3s/storage
+
+      - name: tank/k3s/snapshots
+        properties:
+          compression: lz4
+        mountpoint: /mnt/tank/k3s/snapshots
+
+      - name: tank/projects
+        properties:
+          compression: lz4
+          atime: false
+          recordsize: 128k
+        mountpoint: /mnt/tank/projects
+
+      - name: tank/data-processor
+        properties:
+          compression: lz4
+          atime: false
+          recordsize: 1M # Good for large Wikidata dump files
+        mountpoint: /mnt/tank/data-processor
+
+    # Additional config directories (just ensure they exist under rpool/config)
+    config_directories:
+      - /mnt/rpool/config/adguard
+      - /mnt/rpool/config/nginxproxymanager
+      - /mnt/rpool/config/letsencrypt
+      - /mnt/rpool/config/homepage
+
+    # Media subdirectories
+    media_directories:
+      - /mnt/tank/media/commercials
+      - /mnt/tank/media/movies
+      - /mnt/tank/media/screensaver_videos
+      - /mnt/tank/media/test_videos
+      - /mnt/tank/media/tv_shows
+
+  tasks:
+    - name: Get current ZFS dataset list
+      ansible.builtin.command: zfs list -H -o name
+      register: existing_datasets
+      changed_when: false
+
+    - name: Create k3s datasets
+      community.general.zfs:
+        name: '{{ item.name }}'
+        state: present
+        extra_zfs_properties: '{{ item.properties }}'
+      loop: '{{ k3s_datasets }}'
+      loop_control:
+        label: '{{ item.name }}'
+      when: item.name not in existing_datasets.stdout_lines
+
+    - name: Create CircleCI runner datasets
+      community.general.zfs:
+        name: '{{ item.name }}'
+        state: present
+        extra_zfs_properties: '{{ item.properties }}'
+      loop: '{{ circleci_datasets }}'
+      loop_control:
+        label: '{{ item.name }}'
+      when: item.name not in existing_datasets.stdout_lines
+
+    - name: Set k3s dataset mountpoints
+      community.general.zfs:
+        name: '{{ item.name }}'
+        state: present
+        extra_zfs_properties:
+          mountpoint: '{{ item.mountpoint }}'
+      loop: '{{ k3s_datasets }}'
+      loop_control:
+        label: '{{ item.name }}'
+      when:
+        - item.mountpoint is defined
+        - item.name not in existing_datasets.stdout_lines
+
+    - name: Set CircleCI runner dataset mountpoints
+      community.general.zfs:
+        name: '{{ item.name }}'
+        state: present
+        extra_zfs_properties:
+          mountpoint: '{{ item.mountpoint }}'
+      loop: '{{ circleci_datasets }}'
+      loop_control:
+        label: '{{ item.name }}'
+      when:
+        - item.mountpoint is defined
+        - item.name not in existing_datasets.stdout_lines
+
+    - name: Ensure tank datasets have correct properties
+      community.general.zfs:
+        name: '{{ item.name }}'
+        state: present
+        extra_zfs_properties: '{{ item.properties }}'
+      loop: '{{ tank_datasets }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Create config directories (unprivileged container ownership)
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        mode: '0755'
+        owner: '100000'
+        group: '100000'
+      loop: '{{ config_directories }}'
+
+    - name: Create media directories (LXC unprivileged mapping)
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        mode: '0775'
+        owner: '100000'
+        group: '100129'
+      loop: '{{ media_directories }}'
+
+    - name: Set proper ownership on tank dataset mount points for LXC containers
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        mode: '0775'
+        owner: '100000'
+        group: '100129'
+      loop:
+        - /mnt/tank/media
+
+    - name: Ensure all datasets are mounted
+      ansible.builtin.command: zfs mount {{ item.name }}
+      register: mount_result
+      failed_when: mount_result.rc != 0 and "already mounted" not in mount_result.stderr
+      changed_when: mount_result.rc == 0
+      loop: '{{ k3s_datasets + circleci_datasets + tank_datasets }}'
+      loop_control:
+        label: '{{ item.name }}'
+
+    - name: Set appropriate permissions on mount points
+      ansible.builtin.file:
+        path: '{{ item.mountpoint }}'
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+      loop: '{{ k3s_datasets + circleci_datasets + tank_datasets }}'
+      loop_control:
+        label: '{{ item.name }}'
+      when:
+        - item.mountpoint is defined
+        - item.name != 'tank/backups/timemachine'
+
+    - name: Set Time Machine directory ownership
+      ansible.builtin.file:
+        path: /mnt/tank/backups/timemachine
+        state: directory
+        mode: '0700'
+        owner: timemachine
+        group: timemachine
+
+    - name: Install NFS utilities (for ZFS NFS sharing)
+      ansible.builtin.apt:
+        name:
+          - nfs-common
+          - nfs-kernel-server
+        state: present
+
+    - name: Enable and start NFS services
+      ansible.builtin.systemd:
+        name: '{{ item }}'
+        state: started
+        enabled: true
+      loop:
+        - rpcbind
+        - nfs-server
+
+    - name: Wait for NFS services to be ready
+      ansible.builtin.wait_for:
+        port: 2049
+        host: localhost
+        timeout: 30
+      when: ansible_service_mgr == "systemd"
+
+    - name: Enable NFS sharing on k3s storage datasets
+      ansible.builtin.command: zfs set sharenfs="rw=@10.5.6.0/24,no_root_squash" {{ item }}
+      loop:
+        - rpool/k3s/storage
+        - tank/k3s/storage
+      register: nfs_share_result
+      changed_when: true
+
+    - name: Check if data-processor container exists
+      ansible.builtin.command: pct status 116
+      register: data_processor_status
+      failed_when: false
+      changed_when: false
+
+    - name: Configure data bind mount for data-processor container
+      ansible.builtin.command: pct set 116 -mp0 /mnt/tank/data-processor,mp=/data
+      when: data_processor_status.rc == 0
+      register: data_processor_mount
+      changed_when: data_processor_mount.rc == 0
